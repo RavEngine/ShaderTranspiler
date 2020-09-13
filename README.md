@@ -65,7 +65,7 @@ If you simply want to play around with the library, you can use one of the init 
 
 # Issue reporting
 Known issues:
-- Dependence on `std::filesystem` and C++17
+- Dependence on `std::filesystem`, C++17, and `/std:c++latest`
 - Writing SPIR-V binaries on a Big Endian machine will not work.
 
 Use the Issues section to report problems. Contributions are welcome, use pull requests. 

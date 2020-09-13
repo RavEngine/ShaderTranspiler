@@ -4,6 +4,10 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 PROJECT(ShaderTranspiler)
 
+if(MSVC)
+add_definitions("/std:c++latest")
+endif()
+
 SET(ST_DEPS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/deps")
 
 add_subdirectory("${ST_DEPS_DIR}/glslang")
