@@ -20,8 +20,8 @@ namespace spvtools {
 namespace fuzz {
 
 TransformationAddGlobalVariable::TransformationAddGlobalVariable(
-    const spvtools::fuzz::protobufs::TransformationAddGlobalVariable& message)
-    : message_(message) {}
+    spvtools::fuzz::protobufs::TransformationAddGlobalVariable message)
+    : message_(std::move(message)) {}
 
 TransformationAddGlobalVariable::TransformationAddGlobalVariable(
     uint32_t fresh_id, uint32_t type_id, SpvStorageClass storage_class,
@@ -93,26 +93,29 @@ bool TransformationAddGlobalVariable::IsApplicable(
 void TransformationAddGlobalVariable::Apply(
     opt::IRContext* ir_context,
     TransformationContext* transformation_context) const {
-  fuzzerutil::AddGlobalVariable(
+  opt::Instruction* new_instruction = fuzzerutil::AddGlobalVariable(
       ir_context, message_.fresh_id(), message_.type_id(),
       static_cast<SpvStorageClass>(message_.storage_class()),
       message_.initializer_id());
+
+  // Inform the def-use manager about the new instruction.
+  ir_context->get_def_use_mgr()->AnalyzeInstDefUse(new_instruction);
 
   if (message_.value_is_irrelevant()) {
     transformation_context->GetFactManager()->AddFactValueOfPointeeIsIrrelevant(
         message_.fresh_id());
   }
-
-  // We have added an instruction to the module, so need to be careful about the
-  // validity of existing analyses.
-  ir_context->InvalidateAnalysesExceptFor(
-      opt::IRContext::Analysis::kAnalysisNone);
 }
 
 protobufs::Transformation TransformationAddGlobalVariable::ToMessage() const {
   protobufs::Transformation result;
   *result.mutable_add_global_variable() = message_;
   return result;
+}
+
+std::unordered_set<uint32_t> TransformationAddGlobalVariable::GetFreshIds()
+    const {
+  return {message_.fresh_id()};
 }
 
 }  // namespace fuzz

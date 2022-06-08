@@ -13,6 +13,7 @@
 // limitations under the License.
 
 #include "source/fuzz/fuzzer_pass_add_dead_continues.h"
+
 #include "source/fuzz/fuzzer_util.h"
 #include "source/fuzz/transformation_add_dead_continue.h"
 #include "source/opt/ir_context.h"
@@ -23,11 +24,10 @@ namespace fuzz {
 FuzzerPassAddDeadContinues::FuzzerPassAddDeadContinues(
     opt::IRContext* ir_context, TransformationContext* transformation_context,
     FuzzerContext* fuzzer_context,
-    protobufs::TransformationSequence* transformations)
+    protobufs::TransformationSequence* transformations,
+    bool ignore_inapplicable_transformations)
     : FuzzerPass(ir_context, transformation_context, fuzzer_context,
-                 transformations) {}
-
-FuzzerPassAddDeadContinues::~FuzzerPassAddDeadContinues() = default;
+                 transformations, ignore_inapplicable_transformations) {}
 
 void FuzzerPassAddDeadContinues::Apply() {
   // Consider every block in every function.
@@ -57,18 +57,22 @@ void FuzzerPassAddDeadContinues::Apply() {
       // If this is the case, we don't need to do anything.
       if (!block.IsSuccessor(continue_block)) {
         continue_block->ForEachPhiInst([this, &phi_ids](opt::Instruction* phi) {
-          // Add an additional operand for OpPhi instruction.
-          //
-          // We mark the constant as irrelevant so that we can replace it with a
-          // more interesting value later.
-          phi_ids.push_back(FindOrCreateZeroConstant(phi->type_id(), true));
+          // Add an additional operand for OpPhi instruction.  Use a constant
+          // if possible, and an undef otherwise.
+          if (fuzzerutil::CanCreateConstant(GetIRContext(), phi->type_id())) {
+            // We mark the constant as irrelevant so that we can replace it with
+            // a more interesting value later.
+            phi_ids.push_back(FindOrCreateZeroConstant(phi->type_id(), true));
+          } else {
+            phi_ids.push_back(FindOrCreateGlobalUndef(phi->type_id()));
+          }
         });
       }
 
       // Make sure the module contains a boolean constant equal to
       // |condition_value|.
       bool condition_value = GetFuzzerContext()->ChooseEven();
-      FindOrCreateBoolConstant(condition_value);
+      FindOrCreateBoolConstant(condition_value, false);
 
       // Make a transformation to add a dead continue from this node; if the
       // node turns out to be inappropriate (e.g. by not being in a loop) the

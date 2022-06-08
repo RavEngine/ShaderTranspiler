@@ -13,6 +13,9 @@
 // limitations under the License.
 
 #include "source/fuzz/transformation_replace_parameter_with_global.h"
+
+#include "gtest/gtest.h"
+#include "source/fuzz/fuzzer_util.h"
 #include "test/fuzz/fuzz_test_util.h"
 
 namespace spvtools {
@@ -113,13 +116,11 @@ TEST(TransformationReplaceParameterWithGlobalTest, BasicTest) {
   const auto env = SPV_ENV_UNIVERSAL_1_3;
   const auto consumer = nullptr;
   const auto context = BuildModule(env, consumer, shader, kFuzzAssembleOption);
-  ASSERT_TRUE(IsValid(env, context.get()));
-
-  FactManager fact_manager;
   spvtools::ValidatorOptions validator_options;
-  TransformationContext transformation_context(&fact_manager,
-                                               validator_options);
-
+  ASSERT_TRUE(fuzzerutil::IsValidAndWellFormed(context.get(), validator_options,
+                                               kConsoleMessageConsumer));
+  TransformationContext transformation_context(
+      MakeUnique<FactManager>(context.get()), validator_options);
   // Parameter id is invalid.
   ASSERT_FALSE(TransformationReplaceParameterWithGlobal(50, 50, 51)
                    .IsApplicable(context.get(), transformation_context));
@@ -156,46 +157,54 @@ TEST(TransformationReplaceParameterWithGlobalTest, BasicTest) {
     TransformationReplaceParameterWithGlobal transformation(50, 16, 51);
     ASSERT_TRUE(
         transformation.IsApplicable(context.get(), transformation_context));
-    transformation.Apply(context.get(), &transformation_context);
+    ApplyAndCheckFreshIds(transformation, context.get(),
+                          &transformation_context);
   }
   {
     TransformationReplaceParameterWithGlobal transformation(52, 17, 53);
     ASSERT_TRUE(
         transformation.IsApplicable(context.get(), transformation_context));
-    transformation.Apply(context.get(), &transformation_context);
+    ApplyAndCheckFreshIds(transformation, context.get(),
+                          &transformation_context);
   }
   {
     TransformationReplaceParameterWithGlobal transformation(54, 18, 55);
     ASSERT_TRUE(
         transformation.IsApplicable(context.get(), transformation_context));
-    transformation.Apply(context.get(), &transformation_context);
+    ApplyAndCheckFreshIds(transformation, context.get(),
+                          &transformation_context);
   }
   {
     TransformationReplaceParameterWithGlobal transformation(56, 19, 57);
     ASSERT_TRUE(
         transformation.IsApplicable(context.get(), transformation_context));
-    transformation.Apply(context.get(), &transformation_context);
+    ApplyAndCheckFreshIds(transformation, context.get(),
+                          &transformation_context);
   }
   {
     TransformationReplaceParameterWithGlobal transformation(58, 75, 59);
     ASSERT_TRUE(
         transformation.IsApplicable(context.get(), transformation_context));
-    transformation.Apply(context.get(), &transformation_context);
+    ApplyAndCheckFreshIds(transformation, context.get(),
+                          &transformation_context);
   }
   {
     TransformationReplaceParameterWithGlobal transformation(60, 81, 61);
     ASSERT_TRUE(
         transformation.IsApplicable(context.get(), transformation_context));
-    transformation.Apply(context.get(), &transformation_context);
+    ApplyAndCheckFreshIds(transformation, context.get(),
+                          &transformation_context);
   }
   {
     TransformationReplaceParameterWithGlobal transformation(62, 91, 63);
     ASSERT_TRUE(
         transformation.IsApplicable(context.get(), transformation_context));
-    transformation.Apply(context.get(), &transformation_context);
+    ApplyAndCheckFreshIds(transformation, context.get(),
+                          &transformation_context);
   }
 
-  ASSERT_TRUE(IsValid(env, context.get()));
+  ASSERT_TRUE(fuzzerutil::IsValidAndWellFormed(context.get(), validator_options,
+                                               kConsoleMessageConsumer));
 
   std::string expected_shader = R"(
                OpCapability Shader
@@ -218,11 +227,9 @@ TEST(TransformationReplaceParameterWithGlobalTest, BasicTest) {
          %71 = OpTypeFunction %2 %6
          %83 = OpTypeFunction %2 %6 %12
          %93 = OpTypeFunction %2 %10
-         %94 = OpTypeFunction %2 %8 %10
          %40 = OpTypePointer Function %12
          %13 = OpTypeStruct %6 %8
          %14 = OpTypePointer Private %13
-         %15 = OpTypeFunction %2 %40 %12
          %22 = OpConstant %6 0
          %23 = OpConstant %8 0
          %26 = OpConstantComposite %10 %23 %23
@@ -232,6 +239,7 @@ TEST(TransformationReplaceParameterWithGlobalTest, BasicTest) {
          %53 = OpVariable %9 Private %23
          %55 = OpVariable %11 Private %26
          %57 = OpVariable %14 Private %28
+         %15 = OpTypeFunction %2 %40 %12
          %59 = OpVariable %7 Private %22
          %61 = OpVariable %7 Private %22
          %60 = OpTypeFunction %2 %12
@@ -292,6 +300,63 @@ TEST(TransformationReplaceParameterWithGlobalTest, BasicTest) {
   )";
 
   ASSERT_TRUE(IsEqual(env, expected_shader, context.get()));
+}
+
+TEST(TransformationReplaceParameterWithGlobalTest,
+     HandlesIrrelevantParameters) {
+  std::string shader = R"(
+               OpCapability Shader
+          %1 = OpExtInstImport "GLSL.std.450"
+               OpMemoryModel Logical GLSL450
+               OpEntryPoint Fragment %4 "main"
+               OpExecutionMode %4 OriginUpperLeft
+               OpSource ESSL 310
+          %2 = OpTypeVoid
+          %9 = OpTypeInt 32 1
+          %3 = OpTypeFunction %2
+          %7 = OpTypeFunction %2 %9 %9
+         %12 = OpTypePointer Private %9
+         %13 = OpConstant %9 0
+          %4 = OpFunction %2 None %3
+          %5 = OpLabel
+               OpReturn
+               OpFunctionEnd
+          %6 = OpFunction %2 None %7
+         %10 = OpFunctionParameter %9
+         %11 = OpFunctionParameter %9
+          %8 = OpLabel
+               OpReturn
+               OpFunctionEnd
+  )";
+
+  const auto env = SPV_ENV_UNIVERSAL_1_3;
+  const auto consumer = nullptr;
+  const auto context = BuildModule(env, consumer, shader, kFuzzAssembleOption);
+  spvtools::ValidatorOptions validator_options;
+  ASSERT_TRUE(fuzzerutil::IsValidAndWellFormed(context.get(), validator_options,
+                                               kConsoleMessageConsumer));
+  TransformationContext transformation_context(
+      MakeUnique<FactManager>(context.get()), validator_options);
+  transformation_context.GetFactManager()->AddFactIdIsIrrelevant(10);
+
+  {
+    TransformationReplaceParameterWithGlobal transformation(20, 10, 21);
+    ASSERT_TRUE(
+        transformation.IsApplicable(context.get(), transformation_context));
+    ApplyAndCheckFreshIds(transformation, context.get(),
+                          &transformation_context);
+    ASSERT_TRUE(
+        transformation_context.GetFactManager()->PointeeValueIsIrrelevant(21));
+  }
+  {
+    TransformationReplaceParameterWithGlobal transformation(22, 11, 23);
+    ASSERT_TRUE(
+        transformation.IsApplicable(context.get(), transformation_context));
+    ApplyAndCheckFreshIds(transformation, context.get(),
+                          &transformation_context);
+    ASSERT_FALSE(
+        transformation_context.GetFactManager()->PointeeValueIsIrrelevant(23));
+  }
 }
 
 }  // namespace

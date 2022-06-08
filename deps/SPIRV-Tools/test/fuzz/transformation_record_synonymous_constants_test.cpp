@@ -15,6 +15,8 @@
 
 #include "source/fuzz/transformation_record_synonymous_constants.h"
 
+#include "gtest/gtest.h"
+#include "source/fuzz/fuzzer_util.h"
 #include "test/fuzz/fuzz_test_util.h"
 
 namespace spvtools {
@@ -27,8 +29,9 @@ namespace {
 void ApplyTransformationAndCheckFactManager(
     uint32_t constant1_id, uint32_t constant2_id, opt::IRContext* ir_context,
     TransformationContext* transformation_context) {
-  TransformationRecordSynonymousConstants(constant1_id, constant2_id)
-      .Apply(ir_context, transformation_context);
+  ApplyAndCheckFreshIds(
+      TransformationRecordSynonymousConstants(constant1_id, constant2_id),
+      ir_context, transformation_context);
 
   ASSERT_TRUE(transformation_context->GetFactManager()->IsSynonymous(
       MakeDataDescriptor(constant1_id, {}),
@@ -84,17 +87,15 @@ TEST(TransformationRecordSynonymousConstantsTest, IntConstants) {
   const auto consumer = nullptr;
   const auto context = BuildModule(env, consumer, shader, kFuzzAssembleOption);
 
-  FactManager fact_manager;
   spvtools::ValidatorOptions validator_options;
-  TransformationContext transformation_context(&fact_manager,
-                                               validator_options);
-  ASSERT_TRUE(IsValid(env, context.get()));
+  TransformationContext transformation_context(
+      MakeUnique<FactManager>(context.get()), validator_options);
+  ASSERT_TRUE(fuzzerutil::IsValidAndWellFormed(context.get(), validator_options,
+                                               kConsoleMessageConsumer));
 
   // %3 is not a constant declaration
   ASSERT_FALSE(TransformationRecordSynonymousConstants(3, 9).IsApplicable(
       context.get(), transformation_context));
-
-  // Swapping the ids gives the same result
   ASSERT_FALSE(TransformationRecordSynonymousConstants(9, 3).IsApplicable(
       context.get(), transformation_context));
 
@@ -129,14 +130,12 @@ TEST(TransformationRecordSynonymousConstantsTest, IntConstants) {
   ApplyTransformationAndCheckFactManager(13, 22, context.get(),
                                          &transformation_context);
 
-  // TODO(https://github.com/KhronosGroup/SPIRV-Tools/issues/3536):
-  // Relax type check for integers. Uncomment this code once the issue is fixed.
-  // // %13 and %20 are equal even if %13 is signed and %20 is unsigned
-  //  ASSERT_TRUE(TransformationRecordSynonymousConstants(13, 20).IsApplicable(
-  //      context.get(), transformation_context));
-  //
-  //  ApplyTransformationAndCheckFactManager(13, 20, context.get(),
-  //                                         &transformation_context);
+  // %13 and %20 are equal even if %13 is signed and %20 is unsigned
+  ASSERT_TRUE(TransformationRecordSynonymousConstants(13, 20).IsApplicable(
+      context.get(), transformation_context));
+
+  ApplyTransformationAndCheckFactManager(13, 20, context.get(),
+                                         &transformation_context);
 
   // %9 and %11 are equivalent (OpConstant with value 0 and OpConstantNull)
   ASSERT_TRUE(TransformationRecordSynonymousConstants(9, 11).IsApplicable(
@@ -197,11 +196,11 @@ TEST(TransformationRecordSynonymousConstantsTest, BoolConstants) {
   const auto consumer = nullptr;
   const auto context = BuildModule(env, consumer, shader, kFuzzAssembleOption);
 
-  FactManager fact_manager;
   spvtools::ValidatorOptions validator_options;
-  TransformationContext transformation_context(&fact_manager,
-                                               validator_options);
-  ASSERT_TRUE(IsValid(env, context.get()));
+  TransformationContext transformation_context(
+      MakeUnique<FactManager>(context.get()), validator_options);
+  ASSERT_TRUE(fuzzerutil::IsValidAndWellFormed(context.get(), validator_options,
+                                               kConsoleMessageConsumer));
 
   // %9 and %11 are not equivalent
   ASSERT_FALSE(TransformationRecordSynonymousConstants(9, 11).IsApplicable(
@@ -289,11 +288,11 @@ TEST(TransformationRecordSynonymousConstantsTest, FloatConstants) {
   const auto consumer = nullptr;
   const auto context = BuildModule(env, consumer, shader, kFuzzAssembleOption);
 
-  FactManager fact_manager;
   spvtools::ValidatorOptions validator_options;
-  TransformationContext transformation_context(&fact_manager,
-                                               validator_options);
-  ASSERT_TRUE(IsValid(env, context.get()));
+  TransformationContext transformation_context(
+      MakeUnique<FactManager>(context.get()), validator_options);
+  ASSERT_TRUE(fuzzerutil::IsValidAndWellFormed(context.get(), validator_options,
+                                               kConsoleMessageConsumer));
 
   // %9 and %13 are not equivalent
   ASSERT_FALSE(TransformationRecordSynonymousConstants(9, 13).IsApplicable(
@@ -395,11 +394,11 @@ TEST(TransformationRecordSynonymousConstantsTest,
   const auto consumer = nullptr;
   const auto context = BuildModule(env, consumer, shader, kFuzzAssembleOption);
 
-  FactManager fact_manager;
   spvtools::ValidatorOptions validator_options;
-  TransformationContext transformation_context(&fact_manager,
-                                               validator_options);
-  ASSERT_TRUE(IsValid(env, context.get()));
+  TransformationContext transformation_context(
+      MakeUnique<FactManager>(context.get()), validator_options);
+  ASSERT_TRUE(fuzzerutil::IsValidAndWellFormed(context.get(), validator_options,
+                                               kConsoleMessageConsumer));
 
   // %25 and %27 are equivalent (25 is zero-like, 27 is null)
   ASSERT_TRUE(TransformationRecordSynonymousConstants(25, 27).IsApplicable(
@@ -532,11 +531,11 @@ TEST(TransformationRecordSynonymousConstantsTest, StructCompositeConstants) {
   const auto consumer = nullptr;
   const auto context = BuildModule(env, consumer, shader, kFuzzAssembleOption);
 
-  FactManager fact_manager;
   spvtools::ValidatorOptions validator_options;
-  TransformationContext transformation_context(&fact_manager,
-                                               validator_options);
-  ASSERT_TRUE(IsValid(env, context.get()));
+  TransformationContext transformation_context(
+      MakeUnique<FactManager>(context.get()), validator_options);
+  ASSERT_TRUE(fuzzerutil::IsValidAndWellFormed(context.get(), validator_options,
+                                               kConsoleMessageConsumer));
 
   // %29 and %35 are not equivalent (they have different types)
   ASSERT_FALSE(TransformationRecordSynonymousConstants(29, 35).IsApplicable(
@@ -630,11 +629,11 @@ TEST(TransformationRecordSynonymousConstantsTest, ArrayCompositeConstants) {
   const auto consumer = nullptr;
   const auto context = BuildModule(env, consumer, shader, kFuzzAssembleOption);
 
-  FactManager fact_manager;
   spvtools::ValidatorOptions validator_options;
-  TransformationContext transformation_context(&fact_manager,
-                                               validator_options);
-  ASSERT_TRUE(IsValid(env, context.get()));
+  TransformationContext transformation_context(
+      MakeUnique<FactManager>(context.get()), validator_options);
+  ASSERT_TRUE(fuzzerutil::IsValidAndWellFormed(context.get(), validator_options,
+                                               kConsoleMessageConsumer));
 
   // %25 and %31 are not equivalent (they have different types)
   ASSERT_FALSE(TransformationRecordSynonymousConstants(25, 31).IsApplicable(
@@ -677,6 +676,206 @@ TEST(TransformationRecordSynonymousConstantsTest, ArrayCompositeConstants) {
   // %36 and %37 are not equivalent (36 is null, 37 does not have all-zero
   // components)
   ASSERT_FALSE(TransformationRecordSynonymousConstants(36, 37).IsApplicable(
+      context.get(), transformation_context));
+}
+
+TEST(TransformationRecordSynonymousConstantsTest, IntVectors) {
+  std::string shader = R"(
+               OpCapability Shader
+          %1 = OpExtInstImport "GLSL.std.450"
+               OpMemoryModel Logical GLSL450
+               OpEntryPoint Fragment %2 "main" %3
+               OpExecutionMode %2 OriginUpperLeft
+               OpSource ESSL 310
+               OpDecorate %3 Location 0
+          %4 = OpTypeVoid
+          %5 = OpTypeFunction %4
+          %6 = OpTypeInt 32 1
+          %7 = OpTypeInt 32 0
+          %8 = OpTypeVector %6 4
+          %9 = OpTypeVector %7 4
+         %10 = OpTypePointer Function %8
+         %11 = OpTypePointer Function %8
+         %12 = OpConstant %6 0
+         %13 = OpConstant %7 0
+         %14 = OpConstant %6 1
+         %25 = OpConstant %7 1
+         %15 = OpConstantComposite %8 %12 %12 %12 %12
+         %16 = OpConstantComposite %9 %13 %13 %13 %13
+         %17 = OpConstantComposite %8 %14 %12 %12 %14
+         %18 = OpConstantComposite %9 %25 %13 %13 %25
+         %19 = OpConstantNull %8
+         %20 = OpConstantNull %9
+         %21 = OpTypeFloat 32
+         %22 = OpTypeVector %21 4
+         %23 = OpTypePointer Output %22
+          %3 = OpVariable %23 Output
+          %2 = OpFunction %4 None %5
+         %24 = OpLabel
+               OpReturn
+               OpFunctionEnd
+  )";
+
+  const auto env = SPV_ENV_UNIVERSAL_1_4;
+  const auto consumer = nullptr;
+  const auto context = BuildModule(env, consumer, shader, kFuzzAssembleOption);
+
+  spvtools::ValidatorOptions validator_options;
+  TransformationContext transformation_context(
+      MakeUnique<FactManager>(context.get()), validator_options);
+  ASSERT_TRUE(fuzzerutil::IsValidAndWellFormed(context.get(), validator_options,
+                                               kConsoleMessageConsumer));
+
+  // %15 and %17 are not equivalent (having non-equivalent components)
+  ASSERT_FALSE(TransformationRecordSynonymousConstants(15, 17).IsApplicable(
+      context.get(), transformation_context));
+
+  // %17 and %19 are not equivalent (%19 is null, %17 is non-zero)
+  ASSERT_FALSE(TransformationRecordSynonymousConstants(17, 19).IsApplicable(
+      context.get(), transformation_context));
+
+  // %17 and %20 are not equivalent (%19 is null, %20 is non-zero)
+  ASSERT_FALSE(TransformationRecordSynonymousConstants(17, 20).IsApplicable(
+      context.get(), transformation_context));
+
+  // %15 and %16 are equivalent (having pairwise equivalent components)
+  ASSERT_TRUE(TransformationRecordSynonymousConstants(15, 16).IsApplicable(
+      context.get(), transformation_context));
+
+  ApplyTransformationAndCheckFactManager(15, 16, context.get(),
+                                         &transformation_context);
+
+  // %17 and %18 are equivalent (having pairwise equivalent components)
+  ASSERT_TRUE(TransformationRecordSynonymousConstants(17, 18).IsApplicable(
+      context.get(), transformation_context));
+
+  ApplyTransformationAndCheckFactManager(17, 18, context.get(),
+                                         &transformation_context);
+
+  // %19 and %20 are equivalent (both null vectors with compatible types)
+  ASSERT_TRUE(TransformationRecordSynonymousConstants(19, 20).IsApplicable(
+      context.get(), transformation_context));
+
+  ApplyTransformationAndCheckFactManager(19, 20, context.get(),
+                                         &transformation_context);
+
+  // %15 and %19 are equivalent (they have compatible types, %15 is zero-like
+  // and %19 is null)
+  ASSERT_TRUE(TransformationRecordSynonymousConstants(15, 19).IsApplicable(
+      context.get(), transformation_context));
+
+  ApplyTransformationAndCheckFactManager(15, 19, context.get(),
+                                         &transformation_context);
+
+  // %15 and %20 are equivalent (they have compatible types, %15 is zero-like
+  // and %20 is null)
+  ASSERT_TRUE(TransformationRecordSynonymousConstants(15, 20).IsApplicable(
+      context.get(), transformation_context));
+
+  ApplyTransformationAndCheckFactManager(15, 20, context.get(),
+                                         &transformation_context);
+}
+
+TEST(TransformationRecordSynonymousConstantsTest, FirstIrrelevantConstant) {
+  std::string shader = R"(
+               OpCapability Shader
+          %1 = OpExtInstImport "GLSL.std.450"
+               OpMemoryModel Logical GLSL450
+               OpEntryPoint Fragment %4 "main"
+               OpExecutionMode %4 OriginUpperLeft
+               OpSource ESSL 310
+          %2 = OpTypeVoid
+          %3 = OpTypeFunction %2
+          %6 = OpTypeFloat 32
+          %7 = OpConstant %6 23
+          %8 = OpConstant %6 23
+          %4 = OpFunction %2 None %3
+          %5 = OpLabel
+               OpReturn
+               OpFunctionEnd
+  )";
+
+  const auto env = SPV_ENV_UNIVERSAL_1_4;
+  const auto consumer = nullptr;
+  const auto context = BuildModule(env, consumer, shader, kFuzzAssembleOption);
+  spvtools::ValidatorOptions validator_options;
+  ASSERT_TRUE(fuzzerutil::IsValidAndWellFormed(context.get(), validator_options,
+                                               kConsoleMessageConsumer));
+  TransformationContext transformation_context(
+      MakeUnique<FactManager>(context.get()), validator_options);
+  ASSERT_TRUE(TransformationRecordSynonymousConstants(7, 8).IsApplicable(
+      context.get(), transformation_context));
+
+  transformation_context.GetFactManager()->AddFactIdIsIrrelevant(7);
+  ASSERT_FALSE(TransformationRecordSynonymousConstants(7, 8).IsApplicable(
+      context.get(), transformation_context));
+}
+
+TEST(TransformationRecordSynonymousConstantsTest, SecondIrrelevantConstant) {
+  std::string shader = R"(
+               OpCapability Shader
+          %1 = OpExtInstImport "GLSL.std.450"
+               OpMemoryModel Logical GLSL450
+               OpEntryPoint Fragment %4 "main"
+               OpExecutionMode %4 OriginUpperLeft
+               OpSource ESSL 310
+          %2 = OpTypeVoid
+          %3 = OpTypeFunction %2
+          %6 = OpTypeFloat 32
+          %7 = OpConstant %6 23
+          %8 = OpConstant %6 23
+          %4 = OpFunction %2 None %3
+          %5 = OpLabel
+               OpReturn
+               OpFunctionEnd
+  )";
+
+  const auto env = SPV_ENV_UNIVERSAL_1_4;
+  const auto consumer = nullptr;
+  const auto context = BuildModule(env, consumer, shader, kFuzzAssembleOption);
+  spvtools::ValidatorOptions validator_options;
+  ASSERT_TRUE(fuzzerutil::IsValidAndWellFormed(context.get(), validator_options,
+                                               kConsoleMessageConsumer));
+  TransformationContext transformation_context(
+      MakeUnique<FactManager>(context.get()), validator_options);
+  ASSERT_TRUE(TransformationRecordSynonymousConstants(7, 8).IsApplicable(
+      context.get(), transformation_context));
+
+  transformation_context.GetFactManager()->AddFactIdIsIrrelevant(8);
+  ASSERT_FALSE(TransformationRecordSynonymousConstants(7, 8).IsApplicable(
+      context.get(), transformation_context));
+}
+
+TEST(TransformationRecordSynonymousConstantsTest, InvalidIds) {
+  std::string shader = R"(
+               OpCapability Shader
+          %1 = OpExtInstImport "GLSL.std.450"
+               OpMemoryModel Logical GLSL450
+               OpEntryPoint Fragment %4 "main"
+               OpExecutionMode %4 OriginUpperLeft
+               OpSource ESSL 310
+          %2 = OpTypeVoid
+          %3 = OpTypeFunction %2
+          %6 = OpTypeFloat 32
+          %7 = OpConstant %6 23
+          %4 = OpFunction %2 None %3
+          %5 = OpLabel
+               OpReturn
+               OpFunctionEnd
+  )";
+
+  const auto env = SPV_ENV_UNIVERSAL_1_4;
+  const auto consumer = nullptr;
+  const auto context = BuildModule(env, consumer, shader, kFuzzAssembleOption);
+  spvtools::ValidatorOptions validator_options;
+  ASSERT_TRUE(fuzzerutil::IsValidAndWellFormed(context.get(), validator_options,
+                                               kConsoleMessageConsumer));
+  TransformationContext transformation_context(
+      MakeUnique<FactManager>(context.get()), validator_options);
+  ASSERT_FALSE(TransformationRecordSynonymousConstants(7, 8).IsApplicable(
+      context.get(), transformation_context));
+
+  ASSERT_FALSE(TransformationRecordSynonymousConstants(8, 7).IsApplicable(
       context.get(), transformation_context));
 }
 

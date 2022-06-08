@@ -25,15 +25,19 @@ namespace fuzz {
 FuzzerPassInterchangeZeroLikeConstants::FuzzerPassInterchangeZeroLikeConstants(
     opt::IRContext* ir_context, TransformationContext* transformation_context,
     FuzzerContext* fuzzer_context,
-    protobufs::TransformationSequence* transformations)
+    protobufs::TransformationSequence* transformations,
+    bool ignore_inapplicable_transformations)
     : FuzzerPass(ir_context, transformation_context, fuzzer_context,
-                 transformations) {}
-
-FuzzerPassInterchangeZeroLikeConstants::
-    ~FuzzerPassInterchangeZeroLikeConstants() = default;
+                 transformations, ignore_inapplicable_transformations) {}
 
 uint32_t FuzzerPassInterchangeZeroLikeConstants::FindOrCreateToggledConstant(
     opt::Instruction* declaration) {
+  // |declaration| must not be a specialization constant because we do not know
+  // the value of specialization constants.
+  if (opt::IsSpecConstantInst(declaration->opcode())) {
+    return 0;
+  }
+
   auto constant = GetIRContext()->get_constant_mgr()->FindDeclaredConstant(
       declaration->result_id());
 
@@ -50,29 +54,11 @@ uint32_t FuzzerPassInterchangeZeroLikeConstants::FindOrCreateToggledConstant(
     if (kind == opt::analysis::Type::kBool ||
         kind == opt::analysis::Type::kInteger ||
         kind == opt::analysis::Type::kFloat) {
-      return FindOrCreateZeroConstant(declaration->type_id());
+      return FindOrCreateZeroConstant(declaration->type_id(), false);
     }
   }
 
   return 0;
-}
-
-void FuzzerPassInterchangeZeroLikeConstants::MaybeAddUseToReplace(
-    opt::Instruction* use_inst, uint32_t use_index, uint32_t replacement_id,
-    std::vector<std::pair<protobufs::IdUseDescriptor, uint32_t>>*
-        uses_to_replace) {
-  // Only consider this use if it is in a block
-  if (!GetIRContext()->get_instr_block(use_inst)) {
-    return;
-  }
-
-  // Get the index of the operand restricted to input operands.
-  uint32_t in_operand_index =
-      fuzzerutil::InOperandIndexFromOperandIndex(*use_inst, use_index);
-  auto id_use_descriptor =
-      MakeIdUseDescriptorFromUse(GetIRContext(), use_inst, in_operand_index);
-  uses_to_replace->emplace_back(
-      std::make_pair(id_use_descriptor, replacement_id));
 }
 
 void FuzzerPassInterchangeZeroLikeConstants::Apply() {
@@ -118,7 +104,7 @@ void FuzzerPassInterchangeZeroLikeConstants::Apply() {
         });
   }
 
-  // Replace the ids
+  // Replace the ids if it is allowed.
   for (auto use_to_replace : uses_to_replace) {
     MaybeApplyTransformation(TransformationReplaceIdWithSynonym(
         use_to_replace.first, use_to_replace.second));

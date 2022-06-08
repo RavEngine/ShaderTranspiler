@@ -15,13 +15,15 @@
 
 #include "transformation_record_synonymous_constants.h"
 
+#include "source/fuzz/fuzzer_util.h"
+
 namespace spvtools {
 namespace fuzz {
 
 TransformationRecordSynonymousConstants::
     TransformationRecordSynonymousConstants(
-        const protobufs::TransformationRecordSynonymousConstants& message)
-    : message_(message) {}
+        protobufs::TransformationRecordSynonymousConstants message)
+    : message_(std::move(message)) {}
 
 TransformationRecordSynonymousConstants::
     TransformationRecordSynonymousConstants(uint32_t constant1_id,
@@ -50,12 +52,12 @@ bool TransformationRecordSynonymousConstants::IsApplicable(
 }
 
 void TransformationRecordSynonymousConstants::Apply(
-    opt::IRContext* ir_context,
+    opt::IRContext* /*unused*/,
     TransformationContext* transformation_context) const {
   // Add the fact to the fact manager
   transformation_context->GetFactManager()->AddFactDataSynonym(
       MakeDataDescriptor(message_.constant1_id(), {}),
-      MakeDataDescriptor(message_.constant2_id(), {}), ir_context);
+      MakeDataDescriptor(message_.constant2_id(), {}));
 }
 
 protobufs::Transformation TransformationRecordSynonymousConstants::ToMessage()
@@ -76,18 +78,19 @@ bool TransformationRecordSynonymousConstants::AreEquivalentConstants(
     return false;
   }
 
-  // The type ids must be the same
-  // TODO(https://github.com/KhronosGroup/SPIRV-Tools/issues/3536): Somehow
-  // relax this for integers (so that unsigned integer and signed integer are
-  // considered the same type)
-  if (def_1->type_id() != def_2->type_id()) {
-    return false;
-  }
-
   auto constant1 = ir_context->get_constant_mgr()->GetConstantFromInst(def_1);
   auto constant2 = ir_context->get_constant_mgr()->GetConstantFromInst(def_2);
 
-  assert(constant1 && constant2 && "The ids must refer to constants.");
+  // The ids must refer to constants.
+  if (!constant1 || !constant2) {
+    return false;
+  }
+
+  // The types must be compatible.
+  if (!fuzzerutil::TypesAreEqualUpToSign(ir_context, def_1->type_id(),
+                                         def_2->type_id())) {
+    return false;
+  }
 
   // If either constant is null, the other is equivalent iff it is zero-like
   if (constant1->AsNullConstant()) {
@@ -100,11 +103,14 @@ bool TransformationRecordSynonymousConstants::AreEquivalentConstants(
 
   // If the constants are scalar, they are equal iff their words are the same
   if (auto scalar1 = constant1->AsScalarConstant()) {
+    // Either both or neither constant is scalar since we've already checked
+    // that their types are compatible.
+    assert(constant2->AsScalarConstant() && "Both constants must be scalar");
     return scalar1->words() == constant2->AsScalarConstant()->words();
   }
 
   // The only remaining possibility is that the constants are composite
-  assert(constant1->AsCompositeConstant() &&
+  assert(constant1->AsCompositeConstant() && constant2->AsCompositeConstant() &&
          "Equivalence of constants can only be checked with scalar, composite "
          "or null constants.");
 
@@ -120,6 +126,11 @@ bool TransformationRecordSynonymousConstants::AreEquivalentConstants(
 
   // If we get here, all the components are equivalent
   return true;
+}
+
+std::unordered_set<uint32_t>
+TransformationRecordSynonymousConstants::GetFreshIds() const {
+  return std::unordered_set<uint32_t>();
 }
 
 }  // namespace fuzz

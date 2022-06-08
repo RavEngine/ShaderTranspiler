@@ -26,11 +26,10 @@ namespace fuzz {
 FuzzerPassAddFunctionCalls::FuzzerPassAddFunctionCalls(
     opt::IRContext* ir_context, TransformationContext* transformation_context,
     FuzzerContext* fuzzer_context,
-    protobufs::TransformationSequence* transformations)
+    protobufs::TransformationSequence* transformations,
+    bool ignore_inapplicable_transformations)
     : FuzzerPass(ir_context, transformation_context, fuzzer_context,
-                 transformations) {}
-
-FuzzerPassAddFunctionCalls::~FuzzerPassAddFunctionCalls() = default;
+                 transformations, ignore_inapplicable_transformations) {}
 
 void FuzzerPassAddFunctionCalls::Apply() {
   ForEachInstructionWithInstructionDescriptor(
@@ -141,9 +140,13 @@ std::vector<uint32_t> FuzzerPassAddFunctionCalls::ChooseFunctionCallArguments(
     assert(param_type && "Parameter has invalid type");
 
     if (!param_type->AsPointer()) {
-      // We mark the constant as irrelevant so that we can replace it with a
-      // more interesting value later.
-      result.push_back(FindOrCreateZeroConstant(param->type_id(), true));
+      if (fuzzerutil::CanCreateConstant(GetIRContext(), param->type_id())) {
+        // We mark the constant as irrelevant so that we can replace it with a
+        // more interesting value later.
+        result.push_back(FindOrCreateZeroConstant(param->type_id(), true));
+      } else {
+        result.push_back(FindOrCreateGlobalUndef(param->type_id()));
+      }
       continue;
     }
 
@@ -174,7 +177,7 @@ std::vector<uint32_t> FuzzerPassAddFunctionCalls::ChooseFunctionCallArguments(
       // function, noting that its pointee value is irrelevant.
       ApplyTransformation(TransformationAddLocalVariable(
           fresh_variable_id, param->type_id(), caller_function->result_id(),
-          FindOrCreateZeroConstant(pointee_type_id), true));
+          FindOrCreateZeroConstant(pointee_type_id, false), true));
     } else {
       assert((storage_class == SpvStorageClassPrivate ||
               storage_class == SpvStorageClassWorkgroup) &&
@@ -186,7 +189,7 @@ std::vector<uint32_t> FuzzerPassAddFunctionCalls::ChooseFunctionCallArguments(
       ApplyTransformation(TransformationAddGlobalVariable(
           fresh_variable_id, param->type_id(), storage_class,
           storage_class == SpvStorageClassPrivate
-              ? FindOrCreateZeroConstant(pointee_type_id)
+              ? FindOrCreateZeroConstant(pointee_type_id, false)
               : 0,
           true));
     }

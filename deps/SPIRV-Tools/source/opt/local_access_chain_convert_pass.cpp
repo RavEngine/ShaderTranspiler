@@ -19,6 +19,7 @@
 #include "ir_builder.h"
 #include "ir_context.h"
 #include "iterator.h"
+#include "source/util/string_utils.h"
 
 namespace spvtools {
 namespace opt {
@@ -27,8 +28,6 @@ namespace {
 
 const uint32_t kStoreValIdInIdx = 1;
 const uint32_t kAccessChainPtrIdInIdx = 0;
-const uint32_t kConstantValueInIdx = 0;
-const uint32_t kTypeIntWidthInIdx = 0;
 
 }  // anonymous namespace
 
@@ -66,7 +65,19 @@ void LocalAccessChainConvertPass::AppendConstantOperands(
   ptrInst->ForEachInId([&iidIdx, &in_opnds, this](const uint32_t* iid) {
     if (iidIdx > 0) {
       const Instruction* cInst = get_def_use_mgr()->GetDef(*iid);
-      uint32_t val = cInst->GetSingleWordInOperand(kConstantValueInIdx);
+      const auto* constant_value =
+          context()->get_constant_mgr()->GetConstantFromInst(cInst);
+      assert(constant_value != nullptr &&
+             "Expecting the index to be a constant.");
+
+      // We take the sign extended value because OpAccessChain interprets the
+      // index as signed.
+      int64_t long_value = constant_value->GetSignExtendedValue();
+      assert(long_value <= UINT32_MAX && long_value >= 0 &&
+             "The index value is too large for a composite insert or extract "
+             "instruction.");
+
+      uint32_t val = static_cast<uint32_t>(long_value);
       in_opnds->push_back(
           {spv_operand_type_t::SPV_OPERAND_TYPE_LITERAL_INTEGER, {val}});
     }
@@ -77,6 +88,15 @@ void LocalAccessChainConvertPass::AppendConstantOperands(
 bool LocalAccessChainConvertPass::ReplaceAccessChainLoad(
     const Instruction* address_inst, Instruction* original_load) {
   // Build and append load of variable in ptrInst
+  if (address_inst->NumInOperands() == 1) {
+    // An access chain with no indices is essentially a copy.  All that is
+    // needed is to propagate the address.
+    context()->ReplaceAllUsesWith(
+        address_inst->result_id(),
+        address_inst->GetSingleWordInOperand(kAccessChainPtrIdInIdx));
+    return true;
+  }
+
   std::vector<std::unique_ptr<Instruction>> new_inst;
   uint32_t varId;
   uint32_t varPteTypeId;
@@ -86,9 +106,12 @@ bool LocalAccessChainConvertPass::ReplaceAccessChainLoad(
     return false;
   }
 
+  new_inst[0]->UpdateDebugInfoFrom(original_load);
   context()->get_decoration_mgr()->CloneDecorations(
       original_load->result_id(), ldResultId, {SpvDecorationRelaxedPrecision});
   original_load->InsertBefore(std::move(new_inst));
+  context()->get_debug_info_mgr()->AnalyzeDebugInst(
+      original_load->PreviousNode());
 
   // Rewrite |original_load| into an extract.
   Instruction::OperandList new_operands;
@@ -109,6 +132,18 @@ bool LocalAccessChainConvertPass::ReplaceAccessChainLoad(
 bool LocalAccessChainConvertPass::GenAccessChainStoreReplacement(
     const Instruction* ptrInst, uint32_t valId,
     std::vector<std::unique_ptr<Instruction>>* newInsts) {
+  if (ptrInst->NumInOperands() == 1) {
+    // An access chain with no indices is essentially a copy.  However, we still
+    // have to create a new store because the old ones will be deleted.
+    BuildAndAppendInst(
+        SpvOpStore, 0, 0,
+        {{spv_operand_type_t::SPV_OPERAND_TYPE_ID,
+          {ptrInst->GetSingleWordInOperand(kAccessChainPtrIdInIdx)}},
+         {spv_operand_type_t::SPV_OPERAND_TYPE_ID, {valId}}},
+        newInsts);
+    return true;
+  }
+
   // Build and append load of variable in ptrInst
   uint32_t varId;
   uint32_t varPteTypeId;
@@ -144,13 +179,16 @@ bool LocalAccessChainConvertPass::GenAccessChainStoreReplacement(
   return true;
 }
 
-bool LocalAccessChainConvertPass::IsConstantIndexAccessChain(
+bool LocalAccessChainConvertPass::Is32BitConstantIndexAccessChain(
     const Instruction* acp) const {
   uint32_t inIdx = 0;
   return acp->WhileEachInId([&inIdx, this](const uint32_t* tid) {
     if (inIdx > 0) {
       Instruction* opInst = get_def_use_mgr()->GetDef(*tid);
       if (opInst->opcode() != SpvOpConstant) return false;
+      const auto* index =
+          context()->get_constant_mgr()->GetConstantFromInst(opInst);
+      if (index->GetSignExtendedValue() > UINT32_MAX) return false;
     }
     ++inIdx;
     return true;
@@ -160,6 +198,10 @@ bool LocalAccessChainConvertPass::IsConstantIndexAccessChain(
 bool LocalAccessChainConvertPass::HasOnlySupportedRefs(uint32_t ptrId) {
   if (supported_ref_ptrs_.find(ptrId) != supported_ref_ptrs_.end()) return true;
   if (get_def_use_mgr()->WhileEachUser(ptrId, [this](Instruction* user) {
+        if (user->GetCommonDebugOpcode() == CommonDebugInfoDebugValue ||
+            user->GetCommonDebugOpcode() == CommonDebugInfoDebugDeclare) {
+          return true;
+        }
         SpvOp op = user->opcode();
         if (IsNonPtrAccessChain(op) || op == SpvOpCopyObject) {
           if (!HasOnlySupportedRefs(user->result_id())) {
@@ -202,7 +244,7 @@ void LocalAccessChainConvertPass::FindTargetVars(Function* func) {
             break;
           }
           // Rule out variables accessed with non-constant indices
-          if (!IsConstantIndexAccessChain(ptrInst)) {
+          if (!Is32BitConstantIndexAccessChain(ptrInst)) {
             seen_non_target_vars_.insert(varId);
             seen_target_vars_.erase(varId);
             break;
@@ -230,7 +272,6 @@ Pass::Status LocalAccessChainConvertPass::ConvertLocalAccessChains(
           Instruction* ptrInst = GetPtr(&*ii, &varId);
           if (!IsNonPtrAccessChain(ptrInst->opcode())) break;
           if (!IsTargetVar(varId)) break;
-          std::vector<std::unique_ptr<Instruction>> newInsts;
           if (!ReplaceAccessChainLoad(ptrInst, &*ii)) {
             return Status::Failure;
           }
@@ -238,19 +279,26 @@ Pass::Status LocalAccessChainConvertPass::ConvertLocalAccessChains(
         } break;
         case SpvOpStore: {
           uint32_t varId;
-          Instruction* ptrInst = GetPtr(&*ii, &varId);
+          Instruction* store = &*ii;
+          Instruction* ptrInst = GetPtr(store, &varId);
           if (!IsNonPtrAccessChain(ptrInst->opcode())) break;
           if (!IsTargetVar(varId)) break;
           std::vector<std::unique_ptr<Instruction>> newInsts;
-          uint32_t valId = ii->GetSingleWordInOperand(kStoreValIdInIdx);
+          uint32_t valId = store->GetSingleWordInOperand(kStoreValIdInIdx);
           if (!GenAccessChainStoreReplacement(ptrInst, valId, &newInsts)) {
             return Status::Failure;
           }
-          dead_instructions.push_back(&*ii);
+          size_t num_of_instructions_to_skip = newInsts.size() - 1;
+          dead_instructions.push_back(store);
           ++ii;
           ii = ii.InsertBefore(std::move(newInsts));
-          ++ii;
-          ++ii;
+          for (size_t i = 0; i < num_of_instructions_to_skip; ++i) {
+            ii->UpdateDebugInfoFrom(store);
+            context()->get_debug_info_mgr()->AnalyzeDebugInst(&*ii);
+            ++ii;
+          }
+          ii->UpdateDebugInfoFrom(store);
+          context()->get_debug_info_mgr()->AnalyzeDebugInst(&*ii);
           modified = true;
         } break;
         default:
@@ -294,21 +342,26 @@ bool LocalAccessChainConvertPass::AllExtensionsSupported() const {
     return false;
   // If any extension not in allowlist, return false
   for (auto& ei : get_module()->extensions()) {
-    const char* extName =
-        reinterpret_cast<const char*>(&ei.GetInOperand(0).words[0]);
+    const std::string extName = ei.GetInOperand(0).AsString();
     if (extensions_allowlist_.find(extName) == extensions_allowlist_.end())
       return false;
+  }
+  // only allow NonSemantic.Shader.DebugInfo.100, we cannot safely optimise
+  // around unknown extended
+  // instruction sets even if they are non-semantic
+  for (auto& inst : context()->module()->ext_inst_imports()) {
+    assert(inst.opcode() == SpvOpExtInstImport &&
+           "Expecting an import of an extension's instruction set.");
+    const std::string extension_name = inst.GetInOperand(0).AsString();
+    if (spvtools::utils::starts_with(extension_name, "NonSemantic.") &&
+        extension_name != "NonSemantic.Shader.DebugInfo.100") {
+      return false;
+    }
   }
   return true;
 }
 
 Pass::Status LocalAccessChainConvertPass::ProcessImpl() {
-  // If non-32-bit integer type in module, terminate processing
-  // TODO(): Handle non-32-bit integer constants in access chains
-  for (const Instruction& inst : get_module()->types_values())
-    if (inst.opcode() == SpvOpTypeInt &&
-        inst.GetSingleWordInOperand(kTypeIntWidthInIdx) != 32)
-      return Status::SuccessWithoutChange;
   // Do not process if module contains OpGroupDecorate. Additional
   // support required in KillNamesAndDecorates().
   // TODO(greg-lunarg): Add support for OpGroupDecorate
@@ -346,6 +399,7 @@ void LocalAccessChainConvertPass::InitExtensions() {
       "SPV_AMD_gpu_shader_half_float",
       "SPV_KHR_shader_draw_parameters",
       "SPV_KHR_subgroup_vote",
+      "SPV_KHR_8bit_storage",
       "SPV_KHR_16bit_storage",
       "SPV_KHR_device_group",
       "SPV_KHR_multiview",
@@ -383,6 +437,12 @@ void LocalAccessChainConvertPass::InitExtensions() {
       "SPV_KHR_ray_query",
       "SPV_EXT_fragment_invocation_density",
       "SPV_KHR_terminate_invocation",
+      "SPV_KHR_subgroup_uniform_control_flow",
+      "SPV_KHR_integer_dot_product",
+      "SPV_EXT_shader_image_int64",
+      "SPV_KHR_non_semantic_info",
+      "SPV_KHR_uniform_group_instructions",
+      "SPV_KHR_fragment_shader_barycentric",
   });
 }
 

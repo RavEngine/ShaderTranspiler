@@ -24,7 +24,7 @@ namespace fuzz {
 class TransformationRecordSynonymousConstants : public Transformation {
  public:
   explicit TransformationRecordSynonymousConstants(
-      const protobufs::TransformationRecordSynonymousConstants& message);
+      protobufs::TransformationRecordSynonymousConstants message);
 
   TransformationRecordSynonymousConstants(uint32_t constant1_id,
                                           uint32_t constant2_id);
@@ -32,16 +32,17 @@ class TransformationRecordSynonymousConstants : public Transformation {
   // - |message_.constant_id| and |message_.synonym_id| are distinct ids
   //   of constants
   // - |message_.constant_id| and |message_.synonym_id| refer to constants
-  //   that are equal or equivalent.
-  //   TODO(https://github.com/KhronosGroup/SPIRV-Tools/issues/3536): Signed and
-  //   unsigned integers are currently considered non-equivalent
-  //   Two integers with the same width and value are equal, even if one is
-  //   signed and the other is not.
-  //   Constants are equivalent:
-  //   - if both of them represent zero-like values of the same type
-  //   - if they are composite constants with the same type and their
-  //     components are pairwise equivalent.
-  // - |constant1_id| and |constant2_id| may not be irrelevant.
+  //   that are equivalent.
+  // Constants are equivalent if at least one of the following holds:
+  // - they are equal (i.e. they have the same type ids and equal values)
+  // - both of them represent zero-like values of compatible types
+  // - they are composite constants with compatible types and their
+  //   components are pairwise equivalent
+  // Two types are compatible if at least one of the following holds:
+  // - they have the same id
+  // - they are integer scalar types with the same width
+  // - they are integer vectors and their components have the same width
+  //   (this is always the case if the components are equivalent)
   bool IsApplicable(
       opt::IRContext* ir_context,
       const TransformationContext& transformation_context) const override;
@@ -50,6 +51,8 @@ class TransformationRecordSynonymousConstants : public Transformation {
   // are synonyms to the fact manager. The module is not changed.
   void Apply(opt::IRContext* ir_context,
              TransformationContext* transformation_context) const override;
+
+  std::unordered_set<uint32_t> GetFreshIds() const override;
 
   protobufs::Transformation ToMessage() const override;
 

@@ -14,6 +14,8 @@
 
 #include "source/fuzz/transformation_permute_function_parameters.h"
 
+#include "gtest/gtest.h"
+#include "source/fuzz/fuzzer_util.h"
 #include "test/fuzz/fuzz_test_util.h"
 
 namespace spvtools {
@@ -251,13 +253,11 @@ TEST(TransformationPermuteFunctionParametersTest, BasicTest) {
   const auto env = SPV_ENV_UNIVERSAL_1_3;
   const auto consumer = nullptr;
   const auto context = BuildModule(env, consumer, shader, kFuzzAssembleOption);
-  ASSERT_TRUE(IsValid(env, context.get()));
-
-  FactManager fact_manager;
   spvtools::ValidatorOptions validator_options;
-  TransformationContext transformation_context(&fact_manager,
-                                               validator_options);
-
+  ASSERT_TRUE(fuzzerutil::IsValidAndWellFormed(context.get(), validator_options,
+                                               kConsoleMessageConsumer));
+  TransformationContext transformation_context(
+      MakeUnique<FactManager>(context.get()), validator_options);
   // Can't permute main function
   ASSERT_FALSE(TransformationPermuteFunctionParameters(4, 105, {})
                    .IsApplicable(context.get(), transformation_context));
@@ -294,36 +294,46 @@ TEST(TransformationPermuteFunctionParametersTest, BasicTest) {
     TransformationPermuteFunctionParameters transformation(12, 105, {1, 0});
     ASSERT_TRUE(
         transformation.IsApplicable(context.get(), transformation_context));
-    transformation.Apply(context.get(), &transformation_context);
-    ASSERT_TRUE(IsValid(env, context.get()));
+    ApplyAndCheckFreshIds(transformation, context.get(),
+                          &transformation_context);
+    ASSERT_TRUE(fuzzerutil::IsValidAndWellFormed(
+        context.get(), validator_options, kConsoleMessageConsumer));
   }
   {
     TransformationPermuteFunctionParameters transformation(28, 106, {1, 0});
     ASSERT_TRUE(
         transformation.IsApplicable(context.get(), transformation_context));
-    transformation.Apply(context.get(), &transformation_context);
-    ASSERT_TRUE(IsValid(env, context.get()));
+    ApplyAndCheckFreshIds(transformation, context.get(),
+                          &transformation_context);
+    ASSERT_TRUE(fuzzerutil::IsValidAndWellFormed(
+        context.get(), validator_options, kConsoleMessageConsumer));
   }
   {
     TransformationPermuteFunctionParameters transformation(200, 107, {1, 0});
     ASSERT_TRUE(
         transformation.IsApplicable(context.get(), transformation_context));
-    transformation.Apply(context.get(), &transformation_context);
-    ASSERT_TRUE(IsValid(env, context.get()));
+    ApplyAndCheckFreshIds(transformation, context.get(),
+                          &transformation_context);
+    ASSERT_TRUE(fuzzerutil::IsValidAndWellFormed(
+        context.get(), validator_options, kConsoleMessageConsumer));
   }
   {
     TransformationPermuteFunctionParameters transformation(219, 108, {1, 0});
     ASSERT_TRUE(
         transformation.IsApplicable(context.get(), transformation_context));
-    transformation.Apply(context.get(), &transformation_context);
-    ASSERT_TRUE(IsValid(env, context.get()));
+    ApplyAndCheckFreshIds(transformation, context.get(),
+                          &transformation_context);
+    ASSERT_TRUE(fuzzerutil::IsValidAndWellFormed(
+        context.get(), validator_options, kConsoleMessageConsumer));
   }
   {
     TransformationPermuteFunctionParameters transformation(229, 109, {1, 0});
     ASSERT_TRUE(
         transformation.IsApplicable(context.get(), transformation_context));
-    transformation.Apply(context.get(), &transformation_context);
-    ASSERT_TRUE(IsValid(env, context.get()));
+    ApplyAndCheckFreshIds(transformation, context.get(),
+                          &transformation_context);
+    ASSERT_TRUE(fuzzerutil::IsValidAndWellFormed(
+        context.get(), validator_options, kConsoleMessageConsumer));
   }
 
   std::string after_transformation = R"(
@@ -378,7 +388,6 @@ TEST(TransformationPermuteFunctionParametersTest, BasicTest) {
          %17 = OpTypePointer Function %16
          %18 = OpTypeFunction %8 %7 %15 %17
          %24 = OpTypeBool
-         %25 = OpTypeFunction %24 %7 %15
          %31 = OpConstant %6 255
          %33 = OpConstant %6 0
          %34 = OpConstant %6 1
@@ -399,7 +408,7 @@ TEST(TransformationPermuteFunctionParametersTest, BasicTest) {
         %223 = OpTypeFunction %2 %6 %8
         %224 = OpTypeFunction %2 %8 %6
         %233 = OpTypeFunction %2 %42 %24
-        %234 = OpTypeFunction %2 %24 %42
+         %25 = OpTypeFunction %24 %7 %15
         %107 = OpTypeFunction %2 %16 %14
           %4 = OpFunction %2 None %3
           %5 = OpLabel

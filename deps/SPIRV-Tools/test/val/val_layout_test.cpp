@@ -538,7 +538,6 @@ TEST_F(ValidateLayout, ModuleProcessedInvalidIn10) {
            OpMemoryModel Logical GLSL450
            OpName %void "void"
            OpModuleProcessed "this is ok in 1.1 and later"
-           OpDecorate %void Volatile ; bogus, but makes the example short
 %void    = OpTypeVoid
 )";
 
@@ -558,13 +557,32 @@ TEST_F(ValidateLayout, ModuleProcessedValidIn11) {
            OpMemoryModel Logical GLSL450
            OpName %void "void"
            OpModuleProcessed "this is ok in 1.1 and later"
-           OpDecorate %void Volatile ; bogus, but makes the example short
 %void    = OpTypeVoid
 )";
 
   CompileSuccessfully(str, SPV_ENV_UNIVERSAL_1_1);
   ASSERT_EQ(SPV_SUCCESS, ValidateInstructions(SPV_ENV_UNIVERSAL_1_1));
   EXPECT_THAT(getDiagnosticString(), Eq(""));
+}
+
+TEST_F(ValidateLayout, LayoutOrderMixedUp) {
+  char str[] = R"(
+           OpCapability Shader
+           OpCapability Linkage
+           OpMemoryModel Logical GLSL450
+           OpEntryPoint Fragment %fragmentFloat "fragmentFloat"
+           OpExecutionMode %fragmentFloat OriginUpperLeft
+           OpEntryPoint Fragment %fragmentUint "fragmentUint"
+           OpExecutionMode %fragmentUint OriginUpperLeft
+)";
+
+  CompileSuccessfully(str, SPV_ENV_UNIVERSAL_1_1);
+  ASSERT_EQ(SPV_ERROR_INVALID_LAYOUT,
+            ValidateInstructions(SPV_ENV_UNIVERSAL_1_1));
+  // By the mechanics of the validator, we assume ModuleProcessed is in the
+  // right spot, but then that OpName is in the wrong spot.
+  EXPECT_THAT(getDiagnosticString(),
+              HasSubstr("EntryPoint is in an invalid layout section"));
 }
 
 TEST_F(ValidateLayout, ModuleProcessedBeforeLastNameIsTooEarly) {
@@ -583,7 +601,7 @@ TEST_F(ValidateLayout, ModuleProcessedBeforeLastNameIsTooEarly) {
   // By the mechanics of the validator, we assume ModuleProcessed is in the
   // right spot, but then that OpName is in the wrong spot.
   EXPECT_THAT(getDiagnosticString(),
-              HasSubstr("Name cannot appear in a function declaration"));
+              HasSubstr("Name is in an invalid layout section"));
 }
 
 TEST_F(ValidateLayout, ModuleProcessedInvalidAfterFirstAnnotation) {
@@ -599,9 +617,8 @@ TEST_F(ValidateLayout, ModuleProcessedInvalidAfterFirstAnnotation) {
   CompileSuccessfully(str, SPV_ENV_UNIVERSAL_1_1);
   ASSERT_EQ(SPV_ERROR_INVALID_LAYOUT,
             ValidateInstructions(SPV_ENV_UNIVERSAL_1_1));
-  EXPECT_THAT(
-      getDiagnosticString(),
-      HasSubstr("ModuleProcessed cannot appear in a function declaration"));
+  EXPECT_THAT(getDiagnosticString(),
+              HasSubstr("ModuleProcessed is in an invalid layout section"));
 }
 
 TEST_F(ValidateLayout, ModuleProcessedInvalidInFunctionBeforeLabel) {
@@ -646,57 +663,6 @@ TEST_F(ValidateLayout, ModuleProcessedInvalidInBasicBlock) {
   EXPECT_THAT(
       getDiagnosticString(),
       HasSubstr("ModuleProcessed cannot appear in a function declaration"));
-}
-
-TEST_F(ValidateLayout, WebGPUCallerBeforeCalleeBad) {
-  char str[] = R"(
-           OpCapability Shader
-           OpCapability VulkanMemoryModelKHR
-           OpExtension "SPV_KHR_vulkan_memory_model"
-           OpMemoryModel Logical VulkanKHR
-           OpEntryPoint GLCompute %main "main"
-%void    = OpTypeVoid
-%voidfn  = OpTypeFunction %void
-%main    = OpFunction %void None %voidfn
-%1       = OpLabel
-%2       = OpFunctionCall %void %callee
-           OpReturn
-           OpFunctionEnd
-%callee  = OpFunction %void None %voidfn
-%3       = OpLabel
-           OpReturn
-           OpFunctionEnd
-)";
-
-  CompileSuccessfully(str, SPV_ENV_WEBGPU_0);
-  ASSERT_EQ(SPV_ERROR_INVALID_LAYOUT, ValidateInstructions(SPV_ENV_WEBGPU_0));
-  EXPECT_THAT(getDiagnosticString(),
-              HasSubstr("For WebGPU, functions need to be defined before being "
-                        "called.\n  %5 = OpFunctionCall %void %6\n"));
-}
-
-TEST_F(ValidateLayout, WebGPUCalleeBeforeCallerGood) {
-  char str[] = R"(
-           OpCapability Shader
-           OpCapability VulkanMemoryModelKHR
-           OpExtension "SPV_KHR_vulkan_memory_model"
-           OpMemoryModel Logical VulkanKHR
-           OpEntryPoint GLCompute %main "main"
-%void    = OpTypeVoid
-%voidfn  = OpTypeFunction %void
-%callee  = OpFunction %void None %voidfn
-%3       = OpLabel
-           OpReturn
-           OpFunctionEnd
-%main    = OpFunction %void None %voidfn
-%1       = OpLabel
-%2       = OpFunctionCall %void %callee
-           OpReturn
-           OpFunctionEnd
-)";
-
-  CompileSuccessfully(str, SPV_ENV_WEBGPU_0);
-  ASSERT_EQ(SPV_SUCCESS, ValidateInstructions(SPV_ENV_WEBGPU_0));
 }
 
 // TODO(umar): Test optional instructions

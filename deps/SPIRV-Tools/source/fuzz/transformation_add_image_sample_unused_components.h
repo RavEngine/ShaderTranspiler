@@ -26,7 +26,7 @@ namespace fuzz {
 class TransformationAddImageSampleUnusedComponents : public Transformation {
  public:
   explicit TransformationAddImageSampleUnusedComponents(
-      const protobufs::TransformationAddImageSampleUnusedComponents& message);
+      protobufs::TransformationAddImageSampleUnusedComponents message);
 
   TransformationAddImageSampleUnusedComponents(
       uint32_t coordinate_with_unused_components_id,
@@ -44,6 +44,8 @@ class TransformationAddImageSampleUnusedComponents : public Transformation {
   // coordinate with |coordinate_with_unused_components_id|.
   void Apply(opt::IRContext* ir_context,
              TransformationContext* transformation_context) const override;
+
+  std::unordered_set<uint32_t> GetFreshIds() const override;
 
   protobufs::Transformation ToMessage() const override;
 

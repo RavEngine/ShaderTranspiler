@@ -62,11 +62,14 @@ OpEntryPoint GLCompute %main "main"
   spv_target_env env = SPV_ENV_VULKAN_1_0;
   CompileSuccessfully(spirv, env);
   EXPECT_THAT(SPV_ERROR_INVALID_DATA, ValidateInstructions(env));
+  EXPECT_THAT(getDiagnosticString(),
+              AnyVUID("VUID-StandaloneSpirv-LocalSize-06426"));
   EXPECT_THAT(
       getDiagnosticString(),
-      HasSubstr("In the Vulkan environment, GLCompute execution model entry "
-                "points require either the LocalSize execution mode or an "
-                "object decorated with WorkgroupSize must be specified."));
+      HasSubstr(
+          "In the Vulkan environment, GLCompute execution model entry "
+          "points require either the LocalSize or LocalSizeId execution mode "
+          "or an object decorated with WorkgroupSize must be specified."));
 }
 
 TEST_F(ValidateMode, GLComputeNoModeVulkanWorkgroupSize) {
@@ -99,6 +102,40 @@ OpExecutionMode %main LocalSize 1 1 1
   EXPECT_THAT(SPV_SUCCESS, ValidateInstructions(env));
 }
 
+TEST_F(ValidateMode, GLComputeVulkanLocalSizeIdBad) {
+  const std::string spirv = R"(
+OpCapability Shader
+OpMemoryModel Logical GLSL450
+OpEntryPoint GLCompute %main "main"
+OpExecutionModeId %main LocalSizeId %int_1 %int_1 %int_1
+%int = OpTypeInt 32 0
+%int_1 = OpConstant %int 1
+)" + kVoidFunction;
+
+  spv_target_env env = SPV_ENV_VULKAN_1_1;  // need SPIR-V 1.2
+  CompileSuccessfully(spirv, env);
+  EXPECT_THAT(SPV_ERROR_INVALID_DATA, ValidateInstructions(env));
+  EXPECT_THAT(
+      getDiagnosticString(),
+      HasSubstr("LocalSizeId mode is not allowed by the current environment."));
+}
+
+TEST_F(ValidateMode, GLComputeVulkanLocalSizeIdGood) {
+  const std::string spirv = R"(
+OpCapability Shader
+OpMemoryModel Logical GLSL450
+OpEntryPoint GLCompute %main "main"
+OpExecutionModeId %main LocalSizeId %int_1 %int_1 %int_1
+%int = OpTypeInt 32 0
+%int_1 = OpConstant %int 1
+)" + kVoidFunction;
+
+  spv_target_env env = SPV_ENV_VULKAN_1_1;  // need SPIR-V 1.2
+  CompileSuccessfully(spirv, env);
+  spvValidatorOptionsSetAllowLocalSizeId(getValidatorOptions(), true);
+  EXPECT_THAT(SPV_SUCCESS, ValidateInstructions(env));
+}
+
 TEST_F(ValidateMode, FragmentOriginLowerLeftVulkan) {
   const std::string spirv = R"(
 OpCapability Shader
@@ -110,6 +147,8 @@ OpExecutionMode %main OriginLowerLeft
   spv_target_env env = SPV_ENV_VULKAN_1_0;
   CompileSuccessfully(spirv, env);
   EXPECT_THAT(SPV_ERROR_INVALID_DATA, ValidateInstructions(env));
+  EXPECT_THAT(getDiagnosticString(),
+              AnyVUID("VUID-StandaloneSpirv-OriginLowerLeft-04653"));
   EXPECT_THAT(getDiagnosticString(),
               HasSubstr("In the Vulkan environment, the OriginLowerLeft "
                         "execution mode must not be used."));
@@ -127,6 +166,8 @@ OpExecutionMode %main PixelCenterInteger
   spv_target_env env = SPV_ENV_VULKAN_1_0;
   CompileSuccessfully(spirv, env);
   EXPECT_THAT(SPV_ERROR_INVALID_DATA, ValidateInstructions(env));
+  EXPECT_THAT(getDiagnosticString(),
+              AnyVUID("VUID-StandaloneSpirv-PixelCenterInteger-04654"));
   EXPECT_THAT(getDiagnosticString(),
               HasSubstr("In the Vulkan environment, the PixelCenterInteger "
                         "execution mode must not be used."));
@@ -531,24 +572,16 @@ TEST_P(ValidateModeExecution, ExecutionMode) {
 
   std::ostringstream sstr;
   sstr << "OpCapability Shader\n";
-  if (!spvIsWebGPUEnv(env)) {
-    sstr << "OpCapability Geometry\n";
-    sstr << "OpCapability Tessellation\n";
-    sstr << "OpCapability TransformFeedback\n";
-  }
-  if (!spvIsVulkanOrWebGPUEnv(env)) {
+  sstr << "OpCapability Geometry\n";
+  sstr << "OpCapability Tessellation\n";
+  sstr << "OpCapability TransformFeedback\n";
+  if (!spvIsVulkanEnv(env)) {
     sstr << "OpCapability Kernel\n";
     if (env == SPV_ENV_UNIVERSAL_1_3) {
       sstr << "OpCapability SubgroupDispatch\n";
     }
   }
-  if (spvIsWebGPUEnv(env)) {
-    sstr << "OpCapability VulkanMemoryModelKHR\n";
-    sstr << "OpExtension \"SPV_KHR_vulkan_memory_model\"\n";
-    sstr << "OpMemoryModel Logical VulkanKHR\n";
-  } else {
-    sstr << "OpMemoryModel Logical GLSL450\n";
-  }
+  sstr << "OpMemoryModel Logical GLSL450\n";
   sstr << "OpEntryPoint " << model << " %main \"main\"\n";
   if (mode.find("LocalSizeId") == 0 || mode.find("LocalSizeHintId") == 0 ||
       mode.find("SubgroupsPerWorkgroupId") == 0) {
@@ -674,7 +707,7 @@ INSTANTIATE_TEST_SUITE_P(ValidateModeKernelOnlyGoodSpv13, ValidateModeExecution,
                                  Values("Kernel"),
                                  Values("LocalSizeHint 1 1 1", "VecTypeHint 4",
                                         "ContractionOff",
-                                        "LocalSizeHintId %int1"),
+                                        "LocalSizeHintId %int1 %int1 %int1"),
                                  Values(SPV_ENV_UNIVERSAL_1_3)));
 
 INSTANTIATE_TEST_SUITE_P(
@@ -686,7 +719,7 @@ INSTANTIATE_TEST_SUITE_P(
         Values("Geometry", "TessellationControl", "TessellationEvaluation",
                "GLCompute", "Vertex", "Fragment"),
         Values("LocalSizeHint 1 1 1", "VecTypeHint 4", "ContractionOff",
-               "LocalSizeHintId %int1"),
+               "LocalSizeHintId %int1 %int1 %int1"),
         Values(SPV_ENV_UNIVERSAL_1_3)));
 
 INSTANTIATE_TEST_SUITE_P(
@@ -713,39 +746,6 @@ INSTANTIATE_TEST_SUITE_P(
             Values("Xfb", "Initializer", "Finalizer", "SubgroupSize 1",
                    "SubgroupsPerWorkgroup 1", "SubgroupsPerWorkgroupId %int1"),
             Values(SPV_ENV_UNIVERSAL_1_3)));
-
-INSTANTIATE_TEST_SUITE_P(ValidateModeGLComputeWebGPUAllowListGood,
-                         ValidateModeExecution,
-                         Combine(Values(SPV_SUCCESS), Values(""),
-                                 Values("GLCompute"), Values("LocalSize 1 1 1"),
-                                 Values(SPV_ENV_WEBGPU_0)));
-
-INSTANTIATE_TEST_SUITE_P(
-    ValidateModeGLComputeWebGPUAllowListBad, ValidateModeExecution,
-    Combine(Values(SPV_ERROR_INVALID_DATA),
-            Values("Execution mode must be one of OriginUpperLeft, "
-                   "DepthReplacing, DepthGreater, DepthLess, DepthUnchanged, "
-                   "LocalSize, or LocalSizeHint for WebGPU environment"),
-            Values("GLCompute"), Values("LocalSizeId %int1 %int1 %int1"),
-            Values(SPV_ENV_WEBGPU_0)));
-
-INSTANTIATE_TEST_SUITE_P(
-    ValidateModeFragmentWebGPUAllowListGood, ValidateModeExecution,
-    Combine(Values(SPV_SUCCESS), Values(""), Values("Fragment"),
-            Values("OriginUpperLeft", "DepthReplacing", "DepthGreater",
-                   "DepthLess", "DepthUnchanged"),
-            Values(SPV_ENV_WEBGPU_0)));
-
-INSTANTIATE_TEST_SUITE_P(
-    ValidateModeFragmentWebGPUAllowListBad, ValidateModeExecution,
-    Combine(Values(SPV_ERROR_INVALID_DATA),
-            Values("Execution mode must be one of OriginUpperLeft, "
-                   "DepthReplacing, DepthGreater, DepthLess, DepthUnchanged, "
-                   "LocalSize, or LocalSizeHint for WebGPU environment"),
-            Values("Fragment"),
-            Values("PixelCenterInteger", "OriginLowerLeft",
-                   "EarlyFragmentTests"),
-            Values(SPV_ENV_WEBGPU_0)));
 
 TEST_F(ValidateModeExecution, MeshNVLocalSize) {
   const std::string spirv = R"(
@@ -898,7 +898,7 @@ OpCapability Kernel
 OpCapability Shader
 OpMemoryModel Logical GLSL450
 OpEntryPoint Kernel %main "main"
-OpExecutionMode %main LocalSizeHintId %int_1
+OpExecutionMode %main LocalSizeHintId %int_1 %int_1 %int_1
 %int = OpTypeInt 32 0
 %int_1 = OpConstant %int 1
 )" + kVoidFunction;
@@ -917,7 +917,7 @@ OpCapability Kernel
 OpCapability Shader
 OpMemoryModel Logical GLSL450
 OpEntryPoint Kernel %main "main"
-OpExecutionModeId %main LocalSizeHintId %int_1
+OpExecutionModeId %main LocalSizeHintId %int_1 %int_1 %int_1
 %int = OpTypeInt 32 0
 %int_1 = OpConstant %int 1
 )" + kVoidFunction;
@@ -933,7 +933,7 @@ OpCapability Kernel
 OpCapability Shader
 OpMemoryModel Logical GLSL450
 OpEntryPoint Vertex %main "main"
-OpExecutionModeId %main LocalSizeHintId %int_1
+OpExecutionModeId %main LocalSizeHintId %int_1 %int_1 %int_1
 %int = OpTypeInt 32 0
 %int_ptr = OpTypePointer Private %int
 %int_1 = OpVariable %int_ptr Private
@@ -1176,6 +1176,26 @@ OpFunctionEnd
   EXPECT_THAT(SPV_ERROR_INVALID_DATA, ValidateInstructions());
   EXPECT_THAT(getDiagnosticString(),
               HasSubstr("Expected bool scalar type as Result Type"));
+}
+
+TEST_F(ValidateMode, LocalSizeIdVulkan1p3DoesNotRequireOption) {
+  const std::string spirv = R"(
+OpCapability Shader
+OpMemoryModel Logical GLSL450
+OpEntryPoint GLCompute %main "main"
+OpExecutionModeId %main LocalSizeId %int_1 %int_1 %int_1
+%void = OpTypeVoid
+%int = OpTypeInt 32 0
+%int_1 = OpConstant %int 1
+%void_fn = OpTypeFunction %void
+%main = OpFunction %void None %void_fn
+%entry = OpLabel
+OpReturn
+OpFunctionEnd
+)";
+
+  CompileSuccessfully(spirv, SPV_ENV_VULKAN_1_3);
+  EXPECT_EQ(SPV_SUCCESS, ValidateInstructions(SPV_ENV_VULKAN_1_3));
 }
 
 }  // namespace

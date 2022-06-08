@@ -40,8 +40,10 @@ class ValidateBase : public ::testing::Test,
 
   // Assembles the given SPIR-V text, checks that it fails to assemble,
   // and returns resulting diagnostic.  No internal state is updated.
+  // Setting the desired_result to SPV_SUCCESS is used to allow all results
   std::string CompileFailure(std::string code,
-                             spv_target_env env = SPV_ENV_UNIVERSAL_1_0);
+                             spv_target_env env = SPV_ENV_UNIVERSAL_1_0,
+                             spv_result_t desired_result = SPV_SUCCESS);
 
   // Checks that 'code' is valid SPIR-V text representation and stores the
   // binary version for further method calls.
@@ -108,11 +110,17 @@ void ValidateBase<T>::TearDown() {
 
 template <typename T>
 std::string ValidateBase<T>::CompileFailure(std::string code,
-                                            spv_target_env env) {
+                                            spv_target_env env,
+                                            spv_result_t desired_result) {
   spv_diagnostic diagnostic = nullptr;
-  EXPECT_NE(SPV_SUCCESS,
-            spvTextToBinary(ScopedContext(env).context, code.c_str(),
-                            code.size(), &binary_, &diagnostic));
+  spv_result_t actual_result =
+      spvTextToBinary(ScopedContext(env).context, code.c_str(), code.size(),
+                      &binary_, &diagnostic);
+  EXPECT_NE(SPV_SUCCESS, actual_result);
+  // optional check for exact result
+  if (desired_result != SPV_SUCCESS) {
+    EXPECT_EQ(actual_result, desired_result);
+  }
   std::string result(diagnostic->error);
   spvDiagnosticDestroy(diagnostic);
   return result;
@@ -182,5 +190,44 @@ spv_position_t ValidateBase<T>::getErrorPosition() {
 }
 
 }  // namespace spvtest
+
+// For Vulkan testing.
+// Allows test parameter test to list all possible VUIDs with a delimiter that
+// is then split here to check if one VUID was in the error message
+MATCHER_P(AnyVUID, vuid_set, "VUID from the set is in error message") {
+  // use space as delimiter because clang-format will properly line break VUID
+  // strings which is important the entire VUID is in a single line for script
+  // to scan
+  std::string delimiter = " ";
+  std::string token;
+  std::string vuids = std::string(vuid_set);
+  size_t position;
+
+  // Catch case were someone accidentally left spaces by trimming string
+  // clang-format off
+  vuids.erase(std::find_if(vuids.rbegin(), vuids.rend(), [](unsigned char c) {
+    return (c != ' ');
+  }).base(), vuids.end());
+  vuids.erase(vuids.begin(), std::find_if(vuids.begin(), vuids.end(), [](unsigned char c) {
+    return (c != ' ');
+  }));
+  // clang-format on
+
+  do {
+    position = vuids.find(delimiter);
+    if (position != std::string::npos) {
+      token = vuids.substr(0, position);
+      vuids.erase(0, position + delimiter.length());
+    } else {
+      token = vuids.substr(0);  // last item
+    }
+
+    // arg contains diagnostic message
+    if (arg.find(token) != std::string::npos) {
+      return true;
+    }
+  } while (position != std::string::npos);
+  return false;
+}
 
 #endif  // TEST_VAL_VAL_FIXTURES_H_

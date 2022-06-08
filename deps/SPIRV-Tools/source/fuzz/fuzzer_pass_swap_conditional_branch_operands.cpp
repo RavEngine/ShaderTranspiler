@@ -13,6 +13,7 @@
 // limitations under the License.
 
 #include "source/fuzz/fuzzer_pass_swap_conditional_branch_operands.h"
+
 #include "source/fuzz/fuzzer_context.h"
 #include "source/fuzz/fuzzer_util.h"
 #include "source/fuzz/instruction_descriptor.h"
@@ -26,12 +27,10 @@ FuzzerPassSwapBranchConditionalOperands::
         opt::IRContext* ir_context,
         TransformationContext* transformation_context,
         FuzzerContext* fuzzer_context,
-        protobufs::TransformationSequence* transformations)
+        protobufs::TransformationSequence* transformations,
+        bool ignore_inapplicable_transformations)
     : FuzzerPass(ir_context, transformation_context, fuzzer_context,
-                 transformations) {}
-
-FuzzerPassSwapBranchConditionalOperands::
-    ~FuzzerPassSwapBranchConditionalOperands() = default;
+                 transformations, ignore_inapplicable_transformations) {}
 
 void FuzzerPassSwapBranchConditionalOperands::Apply() {
   ForEachInstructionWithInstructionDescriptor(

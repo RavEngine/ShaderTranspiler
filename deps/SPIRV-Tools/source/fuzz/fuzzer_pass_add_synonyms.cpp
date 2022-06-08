@@ -25,17 +25,22 @@ namespace fuzz {
 FuzzerPassAddSynonyms::FuzzerPassAddSynonyms(
     opt::IRContext* ir_context, TransformationContext* transformation_context,
     FuzzerContext* fuzzer_context,
-    protobufs::TransformationSequence* transformations)
+    protobufs::TransformationSequence* transformations,
+    bool ignore_inapplicable_transformations)
     : FuzzerPass(ir_context, transformation_context, fuzzer_context,
-                 transformations) {}
-
-FuzzerPassAddSynonyms::~FuzzerPassAddSynonyms() = default;
+                 transformations, ignore_inapplicable_transformations) {}
 
 void FuzzerPassAddSynonyms::Apply() {
   ForEachInstructionWithInstructionDescriptor(
       [this](opt::Function* function, opt::BasicBlock* block,
              opt::BasicBlock::iterator inst_it,
              const protobufs::InstructionDescriptor& instruction_descriptor) {
+        if (GetTransformationContext()->GetFactManager()->BlockIsDead(
+                block->id())) {
+          // Don't create synonyms in dead blocks.
+          return;
+        }
+
         // Skip |inst_it| if we can't insert anything above it. OpIAdd is just
         // a representative of some instruction that might be produced by the
         // transformation.
@@ -75,9 +80,11 @@ void FuzzerPassAddSynonyms::Apply() {
           case protobufs::TransformationAddSynonym::ADD_ZERO:
           case protobufs::TransformationAddSynonym::SUB_ZERO:
           case protobufs::TransformationAddSynonym::LOGICAL_OR:
+          case protobufs::TransformationAddSynonym::BITWISE_OR:
+          case protobufs::TransformationAddSynonym::BITWISE_XOR:
             // Create a zero constant to be used as an operand of the synonymous
             // instruction.
-            FindOrCreateZeroConstant(existing_synonym->type_id());
+            FindOrCreateZeroConstant(existing_synonym->type_id(), false);
             break;
           case protobufs::TransformationAddSynonym::MUL_ONE:
           case protobufs::TransformationAddSynonym::LOGICAL_AND: {
@@ -97,13 +104,13 @@ void FuzzerPassAddSynonyms::Apply() {
               FindOrCreateCompositeConstant(
                   std::vector<uint32_t>(
                       vector->element_count(),
-                      FindOrCreateConstant({one_word}, element_type_id)),
-                  existing_synonym->type_id());
+                      FindOrCreateConstant({one_word}, element_type_id, false)),
+                  existing_synonym->type_id(), false);
             } else {
               FindOrCreateConstant(
                   {existing_synonym_type->AsFloat() ? fuzzerutil::FloatToWord(1)
                                                     : 1u},
-                  existing_synonym->type_id());
+                  existing_synonym->type_id(), false);
             }
           } break;
           default:

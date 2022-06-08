@@ -68,6 +68,17 @@ bool TransformationAddSynonym::IsApplicable(
     return false;
   }
 
+  const auto* insert_before_inst_block =
+      ir_context->get_instr_block(insert_before_inst);
+  assert(insert_before_inst_block &&
+         "|insert_before_inst| must be in some block");
+
+  if (transformation_context.GetFactManager()->BlockIsDead(
+          insert_before_inst_block->id())) {
+    // We don't create synonyms in dead blocks.
+    return false;
+  }
+
   // Check that we can insert |message._synonymous_instruction| before
   // |message_.insert_before| instruction. We use OpIAdd to represent some
   // instruction that can produce a synonym.
@@ -91,14 +102,19 @@ void TransformationAddSynonym::Apply(
     opt::IRContext* ir_context,
     TransformationContext* transformation_context) const {
   // Add a synonymous instruction.
-  FindInstruction(message_.insert_before(), ir_context)
-      ->InsertBefore(
-          MakeSynonymousInstruction(ir_context, *transformation_context));
+  auto new_instruction =
+      MakeSynonymousInstruction(ir_context, *transformation_context);
+  auto new_instruction_ptr = new_instruction.get();
+  auto insert_before = FindInstruction(message_.insert_before(), ir_context);
+  insert_before->InsertBefore(std::move(new_instruction));
 
   fuzzerutil::UpdateModuleIdBound(ir_context, message_.synonym_fresh_id());
 
-  ir_context->InvalidateAnalysesExceptFor(
-      opt::IRContext::Analysis::kAnalysisNone);
+  // Inform the def-use manager about the new instruction and record its basic
+  // block.
+  ir_context->get_def_use_mgr()->AnalyzeInstDefUse(new_instruction_ptr);
+  ir_context->set_instr_block(new_instruction_ptr,
+                              ir_context->get_instr_block(insert_before));
 
   // Propagate PointeeValueIsIrrelevant fact.
   const auto* new_synonym_type = ir_context->get_type_mgr()->GetType(
@@ -115,7 +131,7 @@ void TransformationAddSynonym::Apply(
   // Mark two ids as synonymous.
   transformation_context->GetFactManager()->AddFactDataSynonym(
       MakeDataDescriptor(message_.result_id(), {}),
-      MakeDataDescriptor(message_.synonym_fresh_id(), {}), ir_context);
+      MakeDataDescriptor(message_.synonym_fresh_id(), {}));
 }
 
 protobufs::Transformation TransformationAddSynonym::ToMessage() const {
@@ -135,7 +151,8 @@ bool TransformationAddSynonym::IsInstructionValid(
     return false;
   }
 
-  if (!fuzzerutil::CanMakeSynonymOf(ir_context, transformation_context, inst)) {
+  if (!fuzzerutil::CanMakeSynonymOf(ir_context, transformation_context,
+                                    *inst)) {
     return false;
   }
 
@@ -153,6 +170,18 @@ bool TransformationAddSynonym::IsInstructionValid(
       }
 
       return type->AsInteger() || type->AsFloat();
+    }
+    case protobufs::TransformationAddSynonym::BITWISE_OR:
+    case protobufs::TransformationAddSynonym::BITWISE_XOR: {
+      // The instruction must be either an integer or a vector of integers.
+      const auto* type = ir_context->get_type_mgr()->GetType(inst->type_id());
+      assert(type && "Instruction's result id is invalid");
+
+      if (const auto* vector = type->AsVector()) {
+        return vector->element_type()->AsInteger();
+      }
+
+      return type->AsInteger();
     }
     case protobufs::TransformationAddSynonym::COPY_OBJECT:
       // All checks for OpCopyObject are handled by
@@ -179,68 +208,56 @@ TransformationAddSynonym::MakeSynonymousInstruction(
   auto synonym_type_id =
       fuzzerutil::GetTypeId(ir_context, message_.result_id());
   assert(synonym_type_id && "Synonym has invalid type id");
+  auto opcode = SpvOpNop;
+  const auto* synonym_type =
+      ir_context->get_type_mgr()->GetType(synonym_type_id);
+  assert(synonym_type && "Synonym has invalid type");
+
+  auto is_integral = (synonym_type->AsVector() &&
+                      synonym_type->AsVector()->element_type()->AsInteger()) ||
+                     synonym_type->AsInteger();
 
   switch (message_.synonym_type()) {
     case protobufs::TransformationAddSynonym::SUB_ZERO:
+      opcode = is_integral ? SpvOpISub : SpvOpFSub;
+      break;
     case protobufs::TransformationAddSynonym::MUL_ONE:
-    case protobufs::TransformationAddSynonym::ADD_ZERO: {
-      const auto* synonym_type =
-          ir_context->get_type_mgr()->GetType(synonym_type_id);
-      assert(synonym_type && "Synonym has invalid type");
+      opcode = is_integral ? SpvOpIMul : SpvOpFMul;
+      break;
+    case protobufs::TransformationAddSynonym::ADD_ZERO:
+      opcode = is_integral ? SpvOpIAdd : SpvOpFAdd;
+      break;
+    case protobufs::TransformationAddSynonym::LOGICAL_OR:
+      opcode = SpvOpLogicalOr;
+      break;
+    case protobufs::TransformationAddSynonym::LOGICAL_AND:
+      opcode = SpvOpLogicalAnd;
+      break;
+    case protobufs::TransformationAddSynonym::BITWISE_OR:
+      opcode = SpvOpBitwiseOr;
+      break;
+    case protobufs::TransformationAddSynonym::BITWISE_XOR:
+      opcode = SpvOpBitwiseXor;
+      break;
 
-      // Compute instruction's opcode based on the type of the operand.
-      // We have already checked that the operand is either a scalar or a vector
-      // of either integers or floats.
-      auto is_integral =
-          (synonym_type->AsVector() &&
-           synonym_type->AsVector()->element_type()->AsInteger()) ||
-          synonym_type->AsInteger();
-      auto opcode = SpvOpNop;
-      switch (message_.synonym_type()) {
-        case protobufs::TransformationAddSynonym::SUB_ZERO:
-          opcode = is_integral ? SpvOpISub : SpvOpFSub;
-          break;
-        case protobufs::TransformationAddSynonym::MUL_ONE:
-          opcode = is_integral ? SpvOpIMul : SpvOpFMul;
-          break;
-        case protobufs::TransformationAddSynonym::ADD_ZERO:
-          opcode = is_integral ? SpvOpIAdd : SpvOpFAdd;
-          break;
-        default:
-          assert(false && "Unreachable");
-          break;
-      }
-
-      return MakeUnique<opt::Instruction>(
-          ir_context, opcode, synonym_type_id, message_.synonym_fresh_id(),
-          opt::Instruction::OperandList{
-              {SPV_OPERAND_TYPE_ID, {message_.result_id()}},
-              {SPV_OPERAND_TYPE_ID,
-               {MaybeGetConstantId(ir_context, transformation_context)}}});
-    }
     case protobufs::TransformationAddSynonym::COPY_OBJECT:
       return MakeUnique<opt::Instruction>(
           ir_context, SpvOpCopyObject, synonym_type_id,
           message_.synonym_fresh_id(),
           opt::Instruction::OperandList{
               {SPV_OPERAND_TYPE_ID, {message_.result_id()}}});
-    case protobufs::TransformationAddSynonym::LOGICAL_OR:
-    case protobufs::TransformationAddSynonym::LOGICAL_AND: {
-      auto opcode = message_.synonym_type() ==
-                            protobufs::TransformationAddSynonym::LOGICAL_OR
-                        ? SpvOpLogicalOr
-                        : SpvOpLogicalAnd;
-      return MakeUnique<opt::Instruction>(
-          ir_context, opcode, synonym_type_id, message_.synonym_fresh_id(),
-          opt::Instruction::OperandList{
-              {SPV_OPERAND_TYPE_ID, {message_.result_id()}},
-              {SPV_OPERAND_TYPE_ID,
-               {MaybeGetConstantId(ir_context, transformation_context)}}});
-    }
+
     default:
       assert(false && "Unhandled synonym type");
       return nullptr;
   }
+
+  return MakeUnique<opt::Instruction>(
+      ir_context, opcode, synonym_type_id, message_.synonym_fresh_id(),
+      opt::Instruction::OperandList{
+          {SPV_OPERAND_TYPE_ID, {message_.result_id()}},
+          {SPV_OPERAND_TYPE_ID,
+           {MaybeGetConstantId(ir_context, transformation_context)}}});
 }
 
 uint32_t TransformationAddSynonym::MaybeGetConstantId(
@@ -257,8 +274,10 @@ uint32_t TransformationAddSynonym::MaybeGetConstantId(
     case protobufs::TransformationAddSynonym::ADD_ZERO:
     case protobufs::TransformationAddSynonym::SUB_ZERO:
     case protobufs::TransformationAddSynonym::LOGICAL_OR:
+    case protobufs::TransformationAddSynonym::BITWISE_OR:
+    case protobufs::TransformationAddSynonym::BITWISE_XOR:
       return fuzzerutil::MaybeGetZeroConstant(
-          ir_context, transformation_context, synonym_type_id);
+          ir_context, transformation_context, synonym_type_id, false);
     case protobufs::TransformationAddSynonym::MUL_ONE:
     case protobufs::TransformationAddSynonym::LOGICAL_AND: {
       auto synonym_type = ir_context->get_type_mgr()->GetType(synonym_type_id);
@@ -272,12 +291,12 @@ uint32_t TransformationAddSynonym::MaybeGetConstantId(
         auto one_word =
             vector->element_type()->AsFloat() ? fuzzerutil::FloatToWord(1) : 1u;
         if (auto scalar_one_id = fuzzerutil::MaybeGetScalarConstant(
-                ir_context, transformation_context, {one_word},
-                element_type_id)) {
+                ir_context, transformation_context, {one_word}, element_type_id,
+                false)) {
           return fuzzerutil::MaybeGetCompositeConstant(
               ir_context, transformation_context,
               std::vector<uint32_t>(vector->element_count(), scalar_one_id),
-              synonym_type_id);
+              synonym_type_id, false);
         }
 
         return 0;
@@ -285,7 +304,7 @@ uint32_t TransformationAddSynonym::MaybeGetConstantId(
         return fuzzerutil::MaybeGetScalarConstant(
             ir_context, transformation_context,
             {synonym_type->AsFloat() ? fuzzerutil::FloatToWord(1) : 1u},
-            synonym_type_id);
+            synonym_type_id, false);
       }
     }
     default:
@@ -303,10 +322,16 @@ bool TransformationAddSynonym::IsAdditionalConstantRequired(
     case protobufs::TransformationAddSynonym::LOGICAL_OR:
     case protobufs::TransformationAddSynonym::MUL_ONE:
     case protobufs::TransformationAddSynonym::LOGICAL_AND:
+    case protobufs::TransformationAddSynonym::BITWISE_OR:
+    case protobufs::TransformationAddSynonym::BITWISE_XOR:
       return true;
     default:
       return false;
   }
+}
+
+std::unordered_set<uint32_t> TransformationAddSynonym::GetFreshIds() const {
+  return {message_.synonym_fresh_id()};
 }
 
 }  // namespace fuzz

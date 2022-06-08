@@ -30,11 +30,10 @@ namespace fuzz {
 FuzzerPassObfuscateConstants::FuzzerPassObfuscateConstants(
     opt::IRContext* ir_context, TransformationContext* transformation_context,
     FuzzerContext* fuzzer_context,
-    protobufs::TransformationSequence* transformations)
+    protobufs::TransformationSequence* transformations,
+    bool ignore_inapplicable_transformations)
     : FuzzerPass(ir_context, transformation_context, fuzzer_context,
-                 transformations) {}
-
-FuzzerPassObfuscateConstants::~FuzzerPassObfuscateConstants() = default;
+                 transformations, ignore_inapplicable_transformations) {}
 
 void FuzzerPassObfuscateConstants::ObfuscateBoolConstantViaConstantPair(
     uint32_t depth, const protobufs::IdUseDescriptor& bool_constant_use,
@@ -311,9 +310,9 @@ void FuzzerPassObfuscateConstants::ObfuscateBoolConstant(
   } while (constant_index_1 == constant_index_2);
 
   auto constant_id_1 = FindOrCreateConstant(
-      available_constant_words[constant_index_1], chosen_type_id);
+      available_constant_words[constant_index_1], chosen_type_id, false);
   auto constant_id_2 = FindOrCreateConstant(
-      available_constant_words[constant_index_2], chosen_type_id);
+      available_constant_words[constant_index_2], chosen_type_id, false);
 
   assert(constant_id_1 != 0 && constant_id_2 != 0 &&
          "We should not find an available constant with an id of 0.");
@@ -347,8 +346,7 @@ void FuzzerPassObfuscateConstants::ObfuscateScalarConstant(
   auto uniform_descriptors =
       GetTransformationContext()
           ->GetFactManager()
-          ->GetUniformDescriptorsForConstant(GetIRContext(),
-                                             constant_use.id_of_interest());
+          ->GetUniformDescriptorsForConstant(constant_use.id_of_interest());
   if (uniform_descriptors.empty()) {
     // No relevant uniforms, so do not obfuscate.
     return;
@@ -361,7 +359,7 @@ void FuzzerPassObfuscateConstants::ObfuscateScalarConstant(
   // Make sure the module has OpConstant instructions for each index used to
   // access a uniform.
   for (auto index : uniform_descriptor.index()) {
-    FindOrCreateIntegerConstant({index}, 32, true);
+    FindOrCreateIntegerConstant({index}, 32, true, false);
   }
 
   // Make sure the module has OpTypePointer that points to the element type of

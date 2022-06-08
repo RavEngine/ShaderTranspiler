@@ -21,16 +21,34 @@
 
 namespace spvtools {
 namespace fuzz {
+namespace {
+
+bool IsBitWidthSupported(opt::IRContext* ir_context, uint32_t bit_width) {
+  switch (bit_width) {
+    case 32:
+      return true;
+    case 64:
+      return ir_context->get_feature_mgr()->HasCapability(
+                 SpvCapabilityFloat64) &&
+             ir_context->get_feature_mgr()->HasCapability(SpvCapabilityInt64);
+    case 16:
+      return ir_context->get_feature_mgr()->HasCapability(
+                 SpvCapabilityFloat16) &&
+             ir_context->get_feature_mgr()->HasCapability(SpvCapabilityInt16);
+    default:
+      return false;
+  }
+}
+
+}  // namespace
 
 FuzzerPassAddEquationInstructions::FuzzerPassAddEquationInstructions(
     opt::IRContext* ir_context, TransformationContext* transformation_context,
     FuzzerContext* fuzzer_context,
-    protobufs::TransformationSequence* transformations)
+    protobufs::TransformationSequence* transformations,
+    bool ignore_inapplicable_transformations)
     : FuzzerPass(ir_context, transformation_context, fuzzer_context,
-                 transformations) {}
-
-FuzzerPassAddEquationInstructions::~FuzzerPassAddEquationInstructions() =
-    default;
+                 transformations, ignore_inapplicable_transformations) {}
 
 void FuzzerPassAddEquationInstructions::Apply() {
   ForEachInstructionWithInstructionDescriptor(
@@ -57,9 +75,13 @@ void FuzzerPassAddEquationInstructions::Apply() {
         std::vector<opt::Instruction*> available_instructions =
             FindAvailableInstructions(
                 function, block, inst_it,
-                [](opt::IRContext*, opt::Instruction* instruction) -> bool {
+                [this](opt::IRContext* /*unused*/,
+                       opt::Instruction* instruction) -> bool {
                   return instruction->result_id() && instruction->type_id() &&
-                         instruction->opcode() != SpvOpUndef;
+                         instruction->opcode() != SpvOpUndef &&
+                         !GetTransformationContext()
+                              ->GetFactManager()
+                              ->IdIsIrrelevant(instruction->result_id());
                 });
 
         // Try the opcodes for which we know how to make ids at random until
@@ -73,8 +95,22 @@ void FuzzerPassAddEquationInstructions::Apply() {
           switch (opcode) {
             case SpvOpConvertSToF:
             case SpvOpConvertUToF: {
-              auto candidate_instructions =
-                  GetIntegerInstructions(available_instructions);
+              std::vector<const opt::Instruction*> candidate_instructions;
+              for (const auto* inst :
+                   GetIntegerInstructions(available_instructions)) {
+                const auto* type =
+                    GetIRContext()->get_type_mgr()->GetType(inst->type_id());
+                assert(type && "|inst| has invalid type");
+
+                if (const auto* vector_type = type->AsVector()) {
+                  type = vector_type->element_type();
+                }
+
+                if (IsBitWidthSupported(GetIRContext(),
+                                        type->AsInteger()->width())) {
+                  candidate_instructions.push_back(inst);
+                }
+              }
 
               if (candidate_instructions.empty()) {
                 break;
@@ -90,10 +126,15 @@ void FuzzerPassAddEquationInstructions::Apply() {
 
               // Make sure a result type exists in the module.
               if (const auto* vector = type->AsVector()) {
+                // We store element count in a separate variable since the
+                // call FindOrCreate* functions below might invalidate
+                // |vector| pointer.
+                const auto element_count = vector->element_count();
+
                 FindOrCreateVectorType(
                     FindOrCreateFloatType(
                         vector->element_type()->AsInteger()->width()),
-                    vector->element_count());
+                    element_count);
               } else {
                 FindOrCreateFloatType(type->AsInteger()->width());
               }
@@ -104,20 +145,8 @@ void FuzzerPassAddEquationInstructions::Apply() {
               return;
             }
             case SpvOpBitcast: {
-              std::vector<const opt::Instruction*> candidate_instructions;
-              for (const auto* inst : available_instructions) {
-                const auto* type =
-                    GetIRContext()->get_type_mgr()->GetType(inst->type_id());
-                assert(type && "Instruction has invalid type");
-                if ((type->AsVector() &&
-                     (type->AsVector()->element_type()->AsInteger() ||
-                      type->AsVector()->element_type()->AsFloat())) ||
-                    type->AsInteger() || type->AsFloat()) {
-                  // We support OpBitcast for only scalars or vectors of
-                  // numerical type.
-                  candidate_instructions.push_back(inst);
-                }
-              }
+              const auto candidate_instructions =
+                  GetNumericalInstructions(available_instructions);
 
               if (!candidate_instructions.empty()) {
                 const auto* operand_inst =
@@ -135,6 +164,11 @@ void FuzzerPassAddEquationInstructions::Apply() {
                 //  is that they must have the same number of bits. Consider
                 //  improving the code below to support this in full.
                 if (const auto* vector = operand_type->AsVector()) {
+                  // We store element count in a separate variable since the
+                  // call FindOrCreate* functions below might invalidate
+                  // |vector| pointer.
+                  const auto element_count = vector->element_count();
+
                   uint32_t element_type_id;
                   if (const auto* int_type =
                           vector->element_type()->AsInteger()) {
@@ -147,8 +181,7 @@ void FuzzerPassAddEquationInstructions::Apply() {
                         GetFuzzerContext()->ChooseEven());
                   }
 
-                  FindOrCreateVectorType(element_type_id,
-                                         vector->element_count());
+                  FindOrCreateVectorType(element_type_id, element_count);
                 } else if (const auto* int_type = operand_type->AsInteger()) {
                   FindOrCreateFloatType(int_type->width());
                 } else {
@@ -341,6 +374,37 @@ FuzzerPassAddEquationInstructions::RestrictToElementBitWidth(
       result.push_back(inst);
     }
   }
+  return result;
+}
+
+std::vector<opt::Instruction*>
+FuzzerPassAddEquationInstructions::GetNumericalInstructions(
+    const std::vector<opt::Instruction*>& instructions) const {
+  std::vector<opt::Instruction*> result;
+
+  for (auto* inst : instructions) {
+    const auto* type = GetIRContext()->get_type_mgr()->GetType(inst->type_id());
+    assert(type && "Instruction has invalid type");
+
+    if (const auto* vector_type = type->AsVector()) {
+      type = vector_type->element_type();
+    }
+
+    if (!type->AsInteger() && !type->AsFloat()) {
+      // Only numerical scalars or vectors of numerical components are
+      // supported.
+      continue;
+    }
+
+    if (!IsBitWidthSupported(GetIRContext(), type->AsInteger()
+                                                 ? type->AsInteger()->width()
+                                                 : type->AsFloat()->width())) {
+      continue;
+    }
+
+    result.push_back(inst);
+  }
+
   return result;
 }
 

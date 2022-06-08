@@ -34,7 +34,7 @@ def empty_main_assembly():
 
 
 @inside_spirv_testsuite('SpirvOptBase')
-class TestAssemblyFileAsOnlyParameter(expect.ValidObjectFile1_5):
+class TestAssemblyFileAsOnlyParameter(expect.ValidObjectFile1_6):
   """Tests that spirv-opt accepts a SPIR-V object file."""
 
   shader = placeholder.FileSPIRVShader(empty_main_assembly(), '.spvasm')
@@ -52,7 +52,7 @@ class TestHelpFlag(expect.ReturnCodeIsZero, expect.StdoutMatch):
 
 
 @inside_spirv_testsuite('SpirvOptFlags')
-class TestValidPassFlags(expect.ValidObjectFile1_5,
+class TestValidPassFlags(expect.ValidObjectFile1_6,
                          expect.ExecutedListOfPasses):
   """Tests that spirv-opt accepts all valid optimization flags."""
 
@@ -72,11 +72,8 @@ class TestValidPassFlags(expect.ValidObjectFile1_5,
       '--private-to-local', '--reduce-load-size', '--redundancy-elimination',
       '--remove-duplicates', '--replace-invalid-opcode', '--ssa-rewrite',
       '--scalar-replacement', '--scalar-replacement=42', '--strength-reduction',
-      '--strip-debug', '--strip-reflect', '--vector-dce', '--workaround-1209',
-      '--unify-const', '--legalize-vector-shuffle',
-      '--split-invalid-unreachable', '--generate-webgpu-initializers',
-      '--decompose-initialized-variables', '--graphics-robust-access',
-      '--wrap-opkill', '--amd-ext-to-khr'
+      '--strip-debug', '--strip-nonsemantic', '--vector-dce', '--workaround-1209',
+      '--unify-const', '--graphics-robust-access', '--wrap-opkill', '--amd-ext-to-khr'
   ]
   expected_passes = [
       'wrap-opkill',
@@ -120,14 +117,10 @@ class TestValidPassFlags(expect.ValidObjectFile1_5,
       'scalar-replacement=42',
       'strength-reduction',
       'strip-debug',
-      'strip-reflect',
+      'strip-nonsemantic',
       'vector-dce',
       'workaround-1209',
       'unify-const',
-      'legalize-vector-shuffle',
-      'split-invalid-unreachable',
-      'generate-webgpu-initializers',
-      'decompose-initialized-variables',
       'graphics-robust-access',
       'wrap-opkill',
       'amd-ext-to-khr'
@@ -139,7 +132,7 @@ class TestValidPassFlags(expect.ValidObjectFile1_5,
 
 
 @inside_spirv_testsuite('SpirvOptFlags')
-class TestPerformanceOptimizationPasses(expect.ValidObjectFile1_5,
+class TestPerformanceOptimizationPasses(expect.ValidObjectFile1_6,
                                         expect.ExecutedListOfPasses):
   """Tests that spirv-opt schedules all the passes triggered by -O."""
 
@@ -149,6 +142,7 @@ class TestPerformanceOptimizationPasses(expect.ValidObjectFile1_5,
       'eliminate-dead-branches',
       'merge-return',
       'inline-entry-points-exhaustive',
+      'eliminate-dead-functions',
       'eliminate-dead-code-aggressive',
       'private-to-local',
       'eliminate-local-single-block',
@@ -196,7 +190,7 @@ class TestPerformanceOptimizationPasses(expect.ValidObjectFile1_5,
 
 
 @inside_spirv_testsuite('SpirvOptFlags')
-class TestSizeOptimizationPasses(expect.ValidObjectFile1_5,
+class TestSizeOptimizationPasses(expect.ValidObjectFile1_6,
                                  expect.ExecutedListOfPasses):
   """Tests that spirv-opt schedules all the passes triggered by -Os."""
 
@@ -243,7 +237,7 @@ class TestSizeOptimizationPasses(expect.ValidObjectFile1_5,
 
 
 @inside_spirv_testsuite('SpirvOptFlags')
-class TestLegalizationPasses(expect.ValidObjectFile1_5,
+class TestLegalizationPasses(expect.ValidObjectFile1_6,
                              expect.ExecutedListOfPasses):
   """Tests that spirv-opt schedules all the passes triggered by --legalize-hlsl.
   """
@@ -361,45 +355,3 @@ class TestLoopPeelingThresholdArgsInvalidNumber(expect.ErrorMessageSubstr):
 
   spirv_args = ['--loop-peeling-threshold=a10f']
   expected_error_substr = 'must have a positive integer argument'
-
-@inside_spirv_testsuite('SpirvOptFlags')
-class TestWebGPUToVulkanThenVulkanToWebGPUIsInvalid(expect.ReturnCodeIsNonZero, expect.ErrorMessageSubstr):
-  """Tests Vulkan->WebGPU flag cannot be used after WebGPU->Vulkan flag."""
-
-  spirv_args = ['--webgpu-to-vulkan', '--vulkan-to-webgpu']
-  expected_error_substr = 'Cannot use both'
-
-@inside_spirv_testsuite('SpirvOptFlags')
-class TestVulkanToWebGPUThenWebGPUToVulkanIsInvalid(expect.ReturnCodeIsNonZero, expect.ErrorMessageSubstr):
-  """Tests WebGPU->Vulkan flag cannot be used after Vulkan->WebGPU flag."""
-
-  spirv_args = ['--vulkan-to-webgpu', '--webgpu-to-vulkan']
-  expected_error_substr = 'Cannot use both'
-
-@inside_spirv_testsuite('SpirvOptFlags')
-class TestTargetEnvThenVulkanToWebGPUIsInvalid(expect.ReturnCodeIsNonZero, expect.ErrorMessageSubstr):
-  """Tests Vulkan->WebGPU flag cannot be used after target env flag."""
-
-  spirv_args = ['--target-env=opengl4.0', '--vulkan-to-webgpu']
-  expected_error_substr = 'defines the target environment'
-
-@inside_spirv_testsuite('SpirvOptFlags')
-class TestVulkanToWebGPUThenTargetEnvIsInvalid(expect.ReturnCodeIsNonZero, expect.ErrorMessageSubstr):
-  """Tests target env flag cannot be used after Vulkan->WebGPU flag."""
-
-  spirv_args = ['--vulkan-to-webgpu', '--target-env=opengl4.0']
-  expected_error_substr = 'defines the target environment'
-
-@inside_spirv_testsuite('SpirvOptFlags')
-class TestTargetEnvThenWebGPUToVulkanIsInvalid(expect.ReturnCodeIsNonZero, expect.ErrorMessageSubstr):
-  """Tests WebGPU->Vulkan flag cannot be used after target env flag."""
-
-  spirv_args = ['--target-env=opengl4.0', '--webgpu-to-vulkan']
-  expected_error_substr = 'defines the target environment'
-
-@inside_spirv_testsuite('SpirvOptFlags')
-class TestWebGPUToVulkanThenTargetEnvIsInvalid(expect.ReturnCodeIsNonZero, expect.ErrorMessageSubstr):
-  """Tests target env flag cannot be used after WebGPU->Vulkan flag."""
-
-  spirv_args = ['--webgpu-to-vulkan', '--target-env=opengl4.0']
-  expected_error_substr = 'defines the target environment'

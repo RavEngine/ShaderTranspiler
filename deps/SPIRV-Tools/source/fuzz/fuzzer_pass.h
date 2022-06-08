@@ -33,7 +33,8 @@ class FuzzerPass {
   FuzzerPass(opt::IRContext* ir_context,
              TransformationContext* transformation_context,
              FuzzerContext* fuzzer_context,
-             protobufs::TransformationSequence* transformations);
+             protobufs::TransformationSequence* transformations,
+             bool ignore_inapplicable_transformations);
 
   virtual ~FuzzerPass();
 
@@ -70,9 +71,9 @@ class FuzzerPass {
       std::function<bool(opt::IRContext*, opt::Instruction*)>
           instruction_is_relevant) const;
 
-  // A helper method that iterates through each instruction in each block, at
-  // all times tracking an instruction descriptor that allows the latest
-  // instruction to be located even if it has no result id.
+  // A helper method that iterates through each instruction in each reachable
+  // block of |function|, at all times tracking an instruction descriptor that
+  // allows the latest instruction to be located even if it has no result id.
   //
   // The code to manipulate the instruction descriptor is a bit fiddly.  The
   // point of this method is to avoiding having to duplicate it in multiple
@@ -87,6 +88,17 @@ class FuzzerPass {
   // whether to try to apply some transformation, and then - if selected - to
   // attempt to apply it.
   void ForEachInstructionWithInstructionDescriptor(
+      opt::Function* function,
+      std::function<
+          void(opt::BasicBlock* block, opt::BasicBlock::iterator inst_it,
+               const protobufs::InstructionDescriptor& instruction_descriptor)>
+          action);
+
+  // Applies the above overload of ForEachInstructionWithInstructionDescriptor
+  // to every function in the module, so that |action| is applied to an
+  // |instruction_descriptor| for every instruction, |inst_it|, of every |block|
+  // in every |function|.
+  void ForEachInstructionWithInstructionDescriptor(
       std::function<
           void(opt::Function* function, opt::BasicBlock* block,
                opt::BasicBlock::iterator inst_it,
@@ -95,27 +107,13 @@ class FuzzerPass {
 
   // A generic helper for applying a transformation that should be applicable
   // by construction, and adding it to the sequence of applied transformations.
-  void ApplyTransformation(const Transformation& transformation) {
-    assert(transformation.IsApplicable(GetIRContext(),
-                                       *GetTransformationContext()) &&
-           "Transformation should be applicable by construction.");
-    transformation.Apply(GetIRContext(), GetTransformationContext());
-    *GetTransformations()->add_transformation() = transformation.ToMessage();
-  }
+  void ApplyTransformation(const Transformation& transformation);
 
   // A generic helper for applying a transformation only if it is applicable.
   // If it is applicable, the transformation is applied and then added to the
   // sequence of applied transformations and the function returns true.
   // Otherwise, the function returns false.
-  bool MaybeApplyTransformation(const Transformation& transformation) {
-    if (transformation.IsApplicable(GetIRContext(),
-                                    *GetTransformationContext())) {
-      transformation.Apply(GetIRContext(), GetTransformationContext());
-      *GetTransformations()->add_transformation() = transformation.ToMessage();
-      return true;
-    }
-    return false;
-  }
+  bool MaybeApplyTransformation(const Transformation& transformation);
 
   // Returns the id of an OpTypeBool instruction.  If such an instruction does
   // not exist, a transformation is applied to add it.
@@ -175,11 +173,10 @@ class FuzzerPass {
   // with |words| as its value.  If either the required integer type or the
   // constant do not exist, transformations are applied to add them.
   // The returned id either participates in IdIsIrrelevant fact or not,
-  // depending
-  // on the |is_irrelevant| parameter.
+  // depending on the |is_irrelevant| parameter.
   uint32_t FindOrCreateIntegerConstant(const std::vector<uint32_t>& words,
                                        uint32_t width, bool is_signed,
-                                       bool is_irrelevant = false);
+                                       bool is_irrelevant);
 
   // Returns the id of an OpConstant instruction, with a floating-point
   // type of width specified by |width|, with |words| as its value.  If either
@@ -188,15 +185,14 @@ class FuzzerPass {
   // participates in IdIsIrrelevant fact or not, depending on the
   // |is_irrelevant| parameter.
   uint32_t FindOrCreateFloatConstant(const std::vector<uint32_t>& words,
-                                     uint32_t width,
-                                     bool is_irrelevant = false);
+                                     uint32_t width, bool is_irrelevant);
 
   // Returns the id of an OpConstantTrue or OpConstantFalse instruction,
   // according to |value|.  If either the required instruction or the bool
   // type do not exist, transformations are applied to add them.
   // The returned id either participates in IdIsIrrelevant fact or not,
   // depending on the |is_irrelevant| parameter.
-  uint32_t FindOrCreateBoolConstant(bool value, bool is_irrelevant = false);
+  uint32_t FindOrCreateBoolConstant(bool value, bool is_irrelevant);
 
   // Returns the id of an OpConstant instruction of type with |type_id|
   // that consists of |words|. If that instruction doesn't exist,
@@ -205,7 +201,7 @@ class FuzzerPass {
   // in the module. The returned id either participates in IdIsIrrelevant fact
   // or not, depending on the |is_irrelevant| parameter.
   uint32_t FindOrCreateConstant(const std::vector<uint32_t>& words,
-                                uint32_t type_id, bool is_irrelevant = false);
+                                uint32_t type_id, bool is_irrelevant);
 
   // Returns the id of an OpConstantComposite instruction of type with |type_id|
   // that consists of |component_ids|. If that instruction doesn't exist,
@@ -216,7 +212,7 @@ class FuzzerPass {
   // depending on the |is_irrelevant| parameter.
   uint32_t FindOrCreateCompositeConstant(
       const std::vector<uint32_t>& component_ids, uint32_t type_id,
-      bool is_irrelevant = false);
+      bool is_irrelevant);
 
   // Returns the result id of an instruction of the form:
   //   %id = OpUndef %|type_id|
@@ -273,13 +269,63 @@ class FuzzerPass {
   //   }           |
   // --------------+-------------------------------
   uint32_t FindOrCreateZeroConstant(uint32_t scalar_or_composite_type_id,
-                                    bool is_irrelevant = false);
+                                    bool is_irrelevant);
+
+  // Adds a pair (id_use_descriptor, |replacement_id|) to the vector
+  // |uses_to_replace|, where id_use_descriptor is the id use descriptor
+  // representing the usage of an id in the |use_inst| instruction, at operand
+  // index |use_index|, only if the instruction is in a basic block.
+  // If the instruction is not in a basic block, it does nothing.
+  void MaybeAddUseToReplace(
+      opt::Instruction* use_inst, uint32_t use_index, uint32_t replacement_id,
+      std::vector<std::pair<protobufs::IdUseDescriptor, uint32_t>>*
+          uses_to_replace);
+
+  // Returns the preheader of the loop with header |header_id|, which satisfies
+  // all of the following conditions:
+  // - It is the only out-of-loop predecessor of the header
+  // - It unconditionally branches to the header
+  // - It is not a loop header itself
+  // If such preheader does not exist, a new one is added and returned.
+  // Requires |header_id| to be the label id of a loop header block that is
+  // reachable in the CFG (and thus has at least 2 predecessors).
+  opt::BasicBlock* GetOrCreateSimpleLoopPreheader(uint32_t header_id);
+
+  // Returns the second block in the pair obtained by splitting |block_id| just
+  // after the last OpPhi or OpVariable instruction in it. Assumes that the
+  // block is not a loop header.
+  opt::BasicBlock* SplitBlockAfterOpPhiOrOpVariable(uint32_t block_id);
+
+  // Returns the id of an available local variable (storage class Function) with
+  // the fact PointeeValueIsIrrelevant set according to
+  // |pointee_value_is_irrelevant|. If there is no such variable, it creates one
+  // in the |function| adding a zero initializer constant that is irrelevant.
+  // The new variable has the fact PointeeValueIsIrrelevant set according to
+  // |pointee_value_is_irrelevant|. The function returns the id of the created
+  // variable.
+  uint32_t FindOrCreateLocalVariable(uint32_t pointer_type_id,
+                                     uint32_t function_id,
+                                     bool pointee_value_is_irrelevant);
+
+  // Returns the id of an available global variable (storage class Private or
+  // Workgroup) with the fact PointeeValueIsIrrelevant set according to
+  // |pointee_value_is_irrelevant|. If there is no such variable, it creates
+  // one, adding a zero initializer constant that is irrelevant. The new
+  // variable has the fact PointeeValueIsIrrelevant set according to
+  // |pointee_value_is_irrelevant|. The function returns the id of the created
+  // variable.
+  uint32_t FindOrCreateGlobalVariable(uint32_t pointer_type_id,
+                                      bool pointee_value_is_irrelevant);
 
  private:
   opt::IRContext* ir_context_;
   TransformationContext* transformation_context_;
   FuzzerContext* fuzzer_context_;
   protobufs::TransformationSequence* transformations_;
+  // If set, then transformations that should be applicable by construction are
+  // still tested for applicability, and ignored if they turn out to be
+  // inapplicable. Otherwise, applicability by construction is asserted.
+  const bool ignore_inapplicable_transformations_;
 };
 
 }  // namespace fuzz

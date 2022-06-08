@@ -51,8 +51,8 @@ TEST_F(BinaryHeaderGet, Default) {
   ASSERT_EQ(SPV_SUCCESS, spvBinaryHeaderGet(&const_bin, endian, &header));
 
   ASSERT_EQ(static_cast<uint32_t>(SpvMagicNumber), header.magic);
-  // Expect SPIRV-Headers updated to SPIR-V 1.5.
-  ASSERT_EQ(0x00010500u, header.version);
+  // Expect SPIRV-Headers updated to SPIR-V 1.6.
+  ASSERT_EQ(0x00010600u, header.version);
   ASSERT_EQ(static_cast<uint32_t>(SPV_GENERATOR_CODEPLAY), header.generator);
   ASSERT_EQ(1u, header.bound);
   ASSERT_EQ(0u, header.schema);
@@ -79,6 +79,38 @@ TEST_F(BinaryHeaderGet, TruncatedHeader) {
     ASSERT_EQ(SPV_ERROR_INVALID_BINARY,
               spvBinaryHeaderGet(&const_bin, SPV_ENDIANNESS_LITTLE, nullptr));
   }
+}
+
+TEST_F(BinaryHeaderGet, VersionNonZeroHighByte) {
+  spv_header_t header;
+  code[1] = 0xFF010300;
+  spv_const_binary_t const_bin = get_const_binary();
+  ASSERT_EQ(SPV_ERROR_INVALID_BINARY,
+            spvBinaryHeaderGet(&const_bin, SPV_ENDIANNESS_LITTLE, &header));
+}
+
+TEST_F(BinaryHeaderGet, VersionNonZeroLowByte) {
+  spv_header_t header;
+  code[1] = 0x000103F0;
+  spv_const_binary_t const_bin = get_const_binary();
+  ASSERT_EQ(SPV_ERROR_INVALID_BINARY,
+            spvBinaryHeaderGet(&const_bin, SPV_ENDIANNESS_LITTLE, &header));
+}
+
+TEST_F(BinaryHeaderGet, VersionTooLow) {
+  spv_header_t header;
+  code[1] = 0x00000300;
+  spv_const_binary_t const_bin = get_const_binary();
+  ASSERT_EQ(SPV_ERROR_INVALID_BINARY,
+            spvBinaryHeaderGet(&const_bin, SPV_ENDIANNESS_LITTLE, &header));
+}
+
+TEST_F(BinaryHeaderGet, VersionTooHigh) {
+  spv_header_t header;
+  code[1] = 0x000F0300;
+  spv_const_binary_t const_bin = get_const_binary();
+  ASSERT_EQ(SPV_ERROR_INVALID_BINARY,
+            spvBinaryHeaderGet(&const_bin, SPV_ENDIANNESS_LITTLE, &header));
 }
 
 }  // namespace

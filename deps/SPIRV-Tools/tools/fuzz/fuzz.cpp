@@ -16,7 +16,7 @@
 #include <cerrno>
 #include <cstring>
 #include <fstream>
-#include <functional>
+#include <memory>
 #include <random>
 #include <sstream>
 #include <string>
@@ -25,17 +25,21 @@
 #include "source/fuzz/fuzzer.h"
 #include "source/fuzz/fuzzer_util.h"
 #include "source/fuzz/protobufs/spirvfuzz_protobufs.h"
+#include "source/fuzz/pseudo_random_generator.h"
 #include "source/fuzz/replayer.h"
 #include "source/fuzz/shrinker.h"
 #include "source/opt/build_module.h"
 #include "source/opt/ir_context.h"
 #include "source/opt/log.h"
 #include "source/spirv_fuzzer_options.h"
+#include "source/util/make_unique.h"
 #include "source/util/string_utils.h"
 #include "tools/io.h"
 #include "tools/util/cli_consumer.h"
 
 namespace {
+
+enum class FuzzingTarget { kSpirv, kWgsl };
 
 // Check that the std::system function can actually be used.
 bool CheckExecuteCommand() {
@@ -107,6 +111,14 @@ Options (in lexicographical order):
                provided if the tool is invoked in fuzzing mode; incompatible
                with replay and shrink modes.  The file should be empty if no
                donors are to be used.
+  --enable-all-passes
+               By default, spirv-fuzz follows the philosophy of "swarm testing"
+               (Groce et al., 2012): only a subset of fuzzer passes are enabled
+               on any given fuzzer run, with the subset being chosen randomly.
+               This flag instead forces *all* fuzzer passes to be enabled.  When
+               running spirv-fuzz many times this is likely to produce *less*
+               diverse fuzzed modules than when swarm testing is used.  The
+               purpose of the flag is to allow that hypothesis to be tested.
   --force-render-red
                Transforms the input shader into a shader that writes red to the
                output buffer, and then captures the original shader as the body
@@ -118,6 +130,25 @@ Options (in lexicographical order):
                Run the validator after applying each fuzzer pass during
                fuzzing.  Aborts fuzzing early if an invalid binary is created.
                Useful for debugging spirv-fuzz.
+  --repeated-pass-strategy=
+               Available strategies are:
+               - looped (the default): a sequence of fuzzer passes is chosen at
+                 the start of fuzzing, via randomly choosing enabled passes, and
+                 augmenting these choices with fuzzer passes that it is
+                 recommended to run subsequently.  Fuzzing then involves
+                 repeatedly applying this fixed sequence of passes.
+               - random: each time a fuzzer pass is requested, this strategy
+                 either provides one at random from the set of enabled passes,
+                 or provides a pass that has been recommended based on a pass
+                 that was used previously.
+               - simple: each time a fuzzer pass is requested, one is provided
+                 at random from the set of enabled passes.
+  --fuzzing-target=
+              This option will adjust probabilities of applying certain
+              transformations s.t. the module always remains valid according
+              to the semantics of some fuzzing target. Available targets:
+              - spir-v - module is valid according to the SPIR-V spec.
+              - wgsl - module is valid according to the WGSL spec.
   --replay
                File from which to read a sequence of transformations to replay
                (instead of fuzzing)
@@ -174,17 +205,22 @@ void FuzzDiagnostic(spv_message_level_t level, const char* /*source*/,
   fprintf(stderr, "%s\n", message);
 }
 
-FuzzStatus ParseFlags(int argc, const char** argv, std::string* in_binary_file,
-                      std::string* out_binary_file, std::string* donors_file,
-                      std::string* replay_transformations_file,
-                      std::vector<std::string>* interestingness_test,
-                      std::string* shrink_transformations_file,
-                      std::string* shrink_temp_file_prefix,
-                      spvtools::FuzzerOptions* fuzzer_options,
-                      spvtools::ValidatorOptions* validator_options) {
+FuzzStatus ParseFlags(
+    int argc, const char** argv, std::string* in_binary_file,
+    std::string* out_binary_file, std::string* donors_file,
+    std::string* replay_transformations_file,
+    std::vector<std::string>* interestingness_test,
+    std::string* shrink_transformations_file,
+    std::string* shrink_temp_file_prefix,
+    spvtools::fuzz::RepeatedPassStrategy* repeated_pass_strategy,
+    FuzzingTarget* fuzzing_target, spvtools::FuzzerOptions* fuzzer_options,
+    spvtools::ValidatorOptions* validator_options) {
   uint32_t positional_arg_index = 0;
   bool only_positional_arguments_remain = false;
   bool force_render_red = false;
+
+  *repeated_pass_strategy =
+      spvtools::fuzz::RepeatedPassStrategy::kLoopedWithRecommendations;
 
   for (int argi = 1; argi < argc; ++argi) {
     const char* cur_arg = argv[argi];
@@ -206,6 +242,9 @@ FuzzStatus ParseFlags(int argc, const char** argv, std::string* in_binary_file,
       } else if (0 == strncmp(cur_arg, "--donors=", sizeof("--donors=") - 1)) {
         const auto split_flag = spvtools::utils::SplitFlagArgs(cur_arg);
         *donors_file = std::string(split_flag.second);
+      } else if (0 == strncmp(cur_arg, "--enable-all-passes",
+                              sizeof("--enable-all-passes") - 1)) {
+        fuzzer_options->enable_all_passes();
       } else if (0 == strncmp(cur_arg, "--force-render-red",
                               sizeof("--force-render-red") - 1)) {
         force_render_red = true;
@@ -215,6 +254,40 @@ FuzzStatus ParseFlags(int argc, const char** argv, std::string* in_binary_file,
       } else if (0 == strncmp(cur_arg, "--replay=", sizeof("--replay=") - 1)) {
         const auto split_flag = spvtools::utils::SplitFlagArgs(cur_arg);
         *replay_transformations_file = std::string(split_flag.second);
+      } else if (0 == strncmp(cur_arg, "--repeated-pass-strategy=",
+                              sizeof("--repeated-pass-strategy=") - 1)) {
+        std::string strategy = spvtools::utils::SplitFlagArgs(cur_arg).second;
+        if (strategy == "looped") {
+          *repeated_pass_strategy =
+              spvtools::fuzz::RepeatedPassStrategy::kLoopedWithRecommendations;
+        } else if (strategy == "random") {
+          *repeated_pass_strategy =
+              spvtools::fuzz::RepeatedPassStrategy::kRandomWithRecommendations;
+        } else if (strategy == "simple") {
+          *repeated_pass_strategy =
+              spvtools::fuzz::RepeatedPassStrategy::kSimple;
+        } else {
+          std::stringstream ss;
+          ss << "Unknown repeated pass strategy '" << strategy << "'"
+             << std::endl;
+          ss << "Valid options are 'looped', 'random' and 'simple'.";
+          spvtools::Error(FuzzDiagnostic, nullptr, {}, ss.str().c_str());
+          return {FuzzActions::STOP, 1};
+        }
+      } else if (0 == strncmp(cur_arg, "--fuzzing-target=",
+                              sizeof("--fuzzing-target=") - 1)) {
+        std::string target = spvtools::utils::SplitFlagArgs(cur_arg).second;
+        if (target == "spir-v") {
+          *fuzzing_target = FuzzingTarget::kSpirv;
+        } else if (target == "wgsl") {
+          *fuzzing_target = FuzzingTarget::kWgsl;
+        } else {
+          std::stringstream ss;
+          ss << "Unknown fuzzing target '" << target << "'" << std::endl;
+          ss << "Valid options are 'spir-v' and 'wgsl'.";
+          spvtools::Error(FuzzDiagnostic, nullptr, {}, ss.str().c_str());
+          return {FuzzActions::STOP, 1};
+        }
       } else if (0 == strncmp(cur_arg, "--replay-range=",
                               sizeof("--replay-range=") - 1)) {
         const auto split_flag = spvtools::utils::SplitFlagArgs(cur_arg);
@@ -405,9 +478,6 @@ bool Replay(const spv_target_env& target_env,
                             &transformation_sequence)) {
     return false;
   }
-  spvtools::fuzz::Replayer replayer(
-      target_env, fuzzer_options->replay_validation_enabled, validator_options);
-  replayer.SetMessageConsumer(spvtools::utils::CLIMessageConsumer);
 
   uint32_t num_transformations_to_apply;
   if (fuzzer_options->replay_range > 0) {
@@ -426,11 +496,16 @@ bool Replay(const spv_target_env& target_env,
                         fuzzer_options->replay_range));
   }
 
-  auto replay_result_status = replayer.Run(
-      binary_in, initial_facts, transformation_sequence,
-      num_transformations_to_apply, binary_out, transformations_applied);
-  return !(replay_result_status !=
-           spvtools::fuzz::Replayer::ReplayerResultStatus::kComplete);
+  auto replay_result =
+      spvtools::fuzz::Replayer(
+          target_env, spvtools::utils::CLIMessageConsumer, binary_in,
+          initial_facts, transformation_sequence, num_transformations_to_apply,
+          fuzzer_options->replay_validation_enabled, validator_options)
+          .Run();
+  replay_result.transformed_module->module()->ToBinary(binary_out, false);
+  *transformations_applied = std::move(replay_result.applied_transformations);
+  return replay_result.status ==
+         spvtools::fuzz::Replayer::ReplayerResultStatus::kComplete;
 }
 
 bool Shrink(const spv_target_env& target_env,
@@ -449,11 +524,6 @@ bool Shrink(const spv_target_env& target_env,
                             &transformation_sequence)) {
     return false;
   }
-  spvtools::fuzz::Shrinker shrinker(
-      target_env, fuzzer_options->shrinker_step_limit,
-      fuzzer_options->replay_validation_enabled, validator_options);
-  shrinker.SetMessageConsumer(spvtools::utils::CLIMessageConsumer);
-
   assert(!interestingness_command.empty() &&
          "An error should have been raised because the interestingness_command "
          "is empty.");
@@ -479,13 +549,20 @@ bool Shrink(const spv_target_env& target_env,
     return ExecuteCommand(command);
   };
 
-  auto shrink_result_status = shrinker.Run(
-      binary_in, initial_facts, transformation_sequence,
-      interestingness_function, binary_out, transformations_applied);
+  auto shrink_result =
+      spvtools::fuzz::Shrinker(
+          target_env, spvtools::utils::CLIMessageConsumer, binary_in,
+          initial_facts, transformation_sequence, interestingness_function,
+          fuzzer_options->shrinker_step_limit,
+          fuzzer_options->replay_validation_enabled, validator_options)
+          .Run();
+
+  *binary_out = std::move(shrink_result.transformed_binary);
+  *transformations_applied = std::move(shrink_result.applied_transformations);
   return spvtools::fuzz::Shrinker::ShrinkerResultStatus::kComplete ==
-             shrink_result_status ||
+             shrink_result.status ||
          spvtools::fuzz::Shrinker::ShrinkerResultStatus::kStepLimitReached ==
-             shrink_result_status;
+             shrink_result.status;
 }
 
 bool Fuzz(const spv_target_env& target_env,
@@ -493,7 +570,9 @@ bool Fuzz(const spv_target_env& target_env,
           spv_validator_options validator_options,
           const std::vector<uint32_t>& binary_in,
           const spvtools::fuzz::protobufs::FactSequence& initial_facts,
-          const std::string& donors, std::vector<uint32_t>* binary_out,
+          const std::string& donors,
+          spvtools::fuzz::RepeatedPassStrategy repeated_pass_strategy,
+          FuzzingTarget fuzzing_target, std::vector<uint32_t>* binary_out,
           spvtools::fuzz::protobufs::TransformationSequence*
               transformations_applied) {
   auto message_consumer = spvtools::utils::CLIMessageConsumer;
@@ -511,8 +590,8 @@ bool Fuzz(const spv_target_env& target_env,
         [donor_filename, message_consumer,
          target_env]() -> std::unique_ptr<spvtools::opt::IRContext> {
           std::vector<uint32_t> donor_binary;
-          if (!ReadFile<uint32_t>(donor_filename.c_str(), "rb",
-                                  &donor_binary)) {
+          if (!ReadBinaryFile<uint32_t>(donor_filename.c_str(),
+                                        &donor_binary)) {
             return nullptr;
           }
           return spvtools::BuildModule(target_env, message_consumer,
@@ -521,21 +600,46 @@ bool Fuzz(const spv_target_env& target_env,
         });
   }
 
+  std::unique_ptr<spvtools::opt::IRContext> ir_context;
+  if (!spvtools::fuzz::fuzzerutil::BuildIRContext(target_env, message_consumer,
+                                                  binary_in, validator_options,
+                                                  &ir_context)) {
+    spvtools::Error(FuzzDiagnostic, nullptr, {}, "Initial binary is invalid");
+    return false;
+  }
+
+  assert((fuzzing_target == FuzzingTarget::kWgsl ||
+          fuzzing_target == FuzzingTarget::kSpirv) &&
+         "Not all fuzzing targets are handled");
+  auto fuzzer_context = spvtools::MakeUnique<spvtools::fuzz::FuzzerContext>(
+      spvtools::MakeUnique<spvtools::fuzz::PseudoRandomGenerator>(
+          fuzzer_options->has_random_seed
+              ? fuzzer_options->random_seed
+              : static_cast<uint32_t>(std::random_device()())),
+      spvtools::fuzz::FuzzerContext::GetMinFreshId(ir_context.get()),
+      fuzzing_target == FuzzingTarget::kWgsl);
+
+  auto transformation_context =
+      spvtools::MakeUnique<spvtools::fuzz::TransformationContext>(
+          spvtools::MakeUnique<spvtools::fuzz::FactManager>(ir_context.get()),
+          validator_options);
+  transformation_context->GetFactManager()->AddInitialFacts(message_consumer,
+                                                            initial_facts);
+
   spvtools::fuzz::Fuzzer fuzzer(
-      target_env,
-      fuzzer_options->has_random_seed
-          ? fuzzer_options->random_seed
-          : static_cast<uint32_t>(std::random_device()()),
-      fuzzer_options->fuzzer_pass_validation_enabled, validator_options);
-  fuzzer.SetMessageConsumer(message_consumer);
-  auto fuzz_result_status =
-      fuzzer.Run(binary_in, initial_facts, donor_suppliers, binary_out,
-                 transformations_applied);
-  if (fuzz_result_status !=
-      spvtools::fuzz::Fuzzer::FuzzerResultStatus::kComplete) {
+      std::move(ir_context), std::move(transformation_context),
+      std::move(fuzzer_context), message_consumer, donor_suppliers,
+      fuzzer_options->all_passes_enabled, repeated_pass_strategy,
+      fuzzer_options->fuzzer_pass_validation_enabled, validator_options, false);
+  auto fuzz_result = fuzzer.Run(0);
+  if (fuzz_result.status ==
+      spvtools::fuzz::Fuzzer::Status::kFuzzerPassLedToInvalidModule) {
     spvtools::Error(FuzzDiagnostic, nullptr, {}, "Error running fuzzer");
     return false;
   }
+
+  fuzzer.GetIRContext()->module()->ToBinary(binary_out, true);
+  *transformations_applied = fuzzer.GetTransformationSequence();
   return true;
 }
 
@@ -558,6 +662,34 @@ void DumpShader(spvtools::opt::IRContext* context, const char* filename) {
   DumpShader(binary, filename);
 }
 
+// Dumps |transformations| to file |filename| in binary format. Useful for
+// interactive debugging.
+void DumpTransformationsBinary(
+    const spvtools::fuzz::protobufs::TransformationSequence& transformations,
+    const char* filename) {
+  std::ofstream transformations_file;
+  transformations_file.open(filename, std::ios::out | std::ios::binary);
+  transformations.SerializeToOstream(&transformations_file);
+  transformations_file.close();
+}
+
+// Dumps |transformations| to file |filename| in JSON format. Useful for
+// interactive debugging.
+void DumpTransformationsJson(
+    const spvtools::fuzz::protobufs::TransformationSequence& transformations,
+    const char* filename) {
+  std::string json_string;
+  auto json_options = google::protobuf::util::JsonOptions();
+  json_options.add_whitespace = true;
+  auto json_generation_status = google::protobuf::util::MessageToJsonString(
+      transformations, &json_string, json_options);
+  if (json_generation_status.ok()) {
+    std::ofstream transformations_json_file(filename);
+    transformations_json_file << json_string;
+    transformations_json_file.close();
+  }
+}
+
 const auto kDefaultEnvironment = SPV_ENV_UNIVERSAL_1_3;
 
 int main(int argc, const char** argv) {
@@ -568,6 +700,8 @@ int main(int argc, const char** argv) {
   std::vector<std::string> interestingness_test;
   std::string shrink_transformations_file;
   std::string shrink_temp_file_prefix = "temp_";
+  spvtools::fuzz::RepeatedPassStrategy repeated_pass_strategy;
+  auto fuzzing_target = FuzzingTarget::kSpirv;
 
   spvtools::FuzzerOptions fuzzer_options;
   spvtools::ValidatorOptions validator_options;
@@ -576,14 +710,15 @@ int main(int argc, const char** argv) {
       ParseFlags(argc, argv, &in_binary_file, &out_binary_file, &donors_file,
                  &replay_transformations_file, &interestingness_test,
                  &shrink_transformations_file, &shrink_temp_file_prefix,
-                 &fuzzer_options, &validator_options);
+                 &repeated_pass_strategy, &fuzzing_target, &fuzzer_options,
+                 &validator_options);
 
   if (status.action == FuzzActions::STOP) {
     return status.code;
   }
 
   std::vector<uint32_t> binary_in;
-  if (!ReadFile<uint32_t>(in_binary_file.c_str(), "rb", &binary_in)) {
+  if (!ReadBinaryFile<uint32_t>(in_binary_file.c_str(), &binary_in)) {
     return 1;
   }
 
@@ -599,9 +734,9 @@ int main(int argc, const char** argv) {
     std::string facts_json_string((std::istreambuf_iterator<char>(facts_input)),
                                   std::istreambuf_iterator<char>());
     facts_input.close();
-    if (google::protobuf::util::Status::OK !=
-        google::protobuf::util::JsonStringToMessage(facts_json_string,
-                                                    &initial_facts)) {
+    if (!google::protobuf::util::JsonStringToMessage(facts_json_string,
+                                                     &initial_facts)
+             .ok()) {
       spvtools::Error(FuzzDiagnostic, nullptr, {}, "Error reading facts data");
       return 1;
     }
@@ -614,16 +749,16 @@ int main(int argc, const char** argv) {
 
   switch (status.action) {
     case FuzzActions::FORCE_RENDER_RED:
-      if (!spvtools::fuzz::ForceRenderRed(target_env, validator_options,
-                                          binary_in, initial_facts,
-                                          &binary_out)) {
+      if (!spvtools::fuzz::ForceRenderRed(
+              target_env, validator_options, binary_in, initial_facts,
+              spvtools::utils::CLIMessageConsumer, &binary_out)) {
         return 1;
       }
       break;
     case FuzzActions::FUZZ:
       if (!Fuzz(target_env, fuzzer_options, validator_options, binary_in,
-                initial_facts, donors_file, &binary_out,
-                &transformations_applied)) {
+                initial_facts, donors_file, repeated_pass_strategy,
+                fuzzing_target, &binary_out, &transformations_applied)) {
         return 1;
       }
       break;
@@ -681,7 +816,7 @@ int main(int argc, const char** argv) {
     json_options.add_whitespace = true;
     auto json_generation_status = google::protobuf::util::MessageToJsonString(
         transformations_applied, &json_string, json_options);
-    if (json_generation_status != google::protobuf::util::Status::OK) {
+    if (!json_generation_status.ok()) {
       spvtools::Error(FuzzDiagnostic, nullptr, {},
                       "Error writing out transformations in JSON format");
       return 1;

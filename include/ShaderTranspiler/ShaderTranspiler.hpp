@@ -31,7 +31,6 @@ struct CompileTask{
 struct CompileResult{
 	std::string data;
 	bool isBinary;
-	std::string suffix;
 };
 
 struct Options{

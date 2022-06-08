@@ -297,31 +297,24 @@ ShaderTranspiler::spirvbytes ShaderTranspiler::OptimizeSPIRV(const spirvbytes& b
 
 CompileResult ShaderTranspiler::CompileTo(const CompileTask& task, TargetAPI api,  const Options& opt){
 	EShLanguage type;
-	string suffix;
 	switch(task.stage){
 		case ShaderStage::Vertex:
 			type = EShLangVertex;
-			suffix = "VS";
 			break;
 		case ShaderStage::Fragment:
 			type = EShLangFragment;
-			suffix = "FS";
 			break;
 		case ShaderStage::TessControl:
 			type = EShLangTessControl;
-			suffix = "TC";
 			break;
 		case ShaderStage::TessEval:
 			type = EShLangTessEvaluation;
-			suffix = "TE";
 			break;
 		case ShaderStage::Geometry:
 			type = EShLangGeometry;
-			suffix = "G";
 			break;
 		case ShaderStage::Compute:
 			type = EShLangCompute;
-			suffix = "C";
 			break;
 	}
 	
@@ -329,17 +322,17 @@ CompileResult ShaderTranspiler::CompileTo(const CompileTask& task, TargetAPI api
 	auto spirv = CompileGLSL(task.filename, type);
 	switch(api){
 		case TargetAPI::OpenGL_ES:
-			return CompileResult{SPIRVToESSL(spirv,opt),false,suffix + ".gles"};
+			return CompileResult{SPIRVToESSL(spirv,opt),false};
 		case TargetAPI::OpenGL:
 			break;
 		case TargetAPI::Vulkan:
 			return SerializeSPIRV(OptimizeSPIRV(spirv, opt));
 			break;
 		case TargetAPI::DirectX11:
-			return CompileResult{SPIRVToHLSL(spirv,opt),false, suffix + ".hlsl"};
+			return CompileResult{SPIRVToHLSL(spirv,opt),false};
 			break;
 		case TargetAPI::Metal:
-			return CompileResult{SPIRVtoMSL(spirv,opt),false, suffix + ".metal"};
+			return CompileResult{SPIRVtoMSL(spirv,opt),false};
 			break;
 		default:
 			throw runtime_error("Unsupported API");

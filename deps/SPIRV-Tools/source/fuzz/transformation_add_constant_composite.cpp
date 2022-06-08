@@ -22,9 +22,8 @@ namespace spvtools {
 namespace fuzz {
 
 TransformationAddConstantComposite::TransformationAddConstantComposite(
-    const spvtools::fuzz::protobufs::TransformationAddConstantComposite&
-        message)
-    : message_(message) {}
+    spvtools::fuzz::protobufs::TransformationAddConstantComposite message)
+    : message_(std::move(message)) {}
 
 TransformationAddConstantComposite::TransformationAddConstantComposite(
     uint32_t fresh_id, uint32_t type_id,
@@ -50,7 +49,8 @@ bool TransformationAddConstantComposite::IsApplicable(
     return false;
   }
   // Gather up the operands for the composite constant, in the process checking
-  // whether the given type really defines a composite.
+  // whether the given type really defines a composite and - in the case of a
+  // struct - whether its decorations are OK.
   std::vector<uint32_t> constituent_type_ids;
   switch (composite_type_instruction->opcode()) {
     case SpvOpTypeArray:
@@ -72,6 +72,14 @@ bool TransformationAddConstantComposite::IsApplicable(
       }
       break;
     case SpvOpTypeStruct:
+      // We do not create constants of structs decorated with Block nor
+      // BufferBlock.  The SPIR-V spec does not explicitly disallow this, but it
+      // seems like a strange thing to do, so we disallow it to avoid triggering
+      // low priority edge case issues related to it.
+      if (fuzzerutil::HasBlockOrBufferBlockDecoration(
+              ir_context, composite_type_instruction->result_id())) {
+        return false;
+      }
       composite_type_instruction->ForEachInOperand(
           [&constituent_type_ids](const uint32_t* member_type_id) {
             constituent_type_ids.push_back(*member_type_id);
@@ -111,14 +119,17 @@ void TransformationAddConstantComposite::Apply(
   for (auto constituent_id : message_.constituent_id()) {
     in_operands.push_back({SPV_OPERAND_TYPE_ID, {constituent_id}});
   }
-  ir_context->module()->AddGlobalValue(MakeUnique<opt::Instruction>(
+  auto new_instruction = MakeUnique<opt::Instruction>(
       ir_context, SpvOpConstantComposite, message_.type_id(),
-      message_.fresh_id(), in_operands));
+      message_.fresh_id(), in_operands);
+  auto new_instruction_ptr = new_instruction.get();
+  ir_context->module()->AddGlobalValue(std::move(new_instruction));
   fuzzerutil::UpdateModuleIdBound(ir_context, message_.fresh_id());
-  // We have added an instruction to the module, so need to be careful about the
-  // validity of existing analyses.
-  ir_context->InvalidateAnalysesExceptFor(
-      opt::IRContext::Analysis::kAnalysisNone);
+
+  // Inform the def-use manager of the new instruction. Invalidate the constant
+  // manager as we have added a new constant.
+  ir_context->get_def_use_mgr()->AnalyzeInstDefUse(new_instruction_ptr);
+  ir_context->InvalidateAnalyses(opt::IRContext::kAnalysisConstants);
 
   if (message_.is_irrelevant()) {
     transformation_context->GetFactManager()->AddFactIdIsIrrelevant(
@@ -131,6 +142,11 @@ protobufs::Transformation TransformationAddConstantComposite::ToMessage()
   protobufs::Transformation result;
   *result.mutable_add_constant_composite() = message_;
   return result;
+}
+
+std::unordered_set<uint32_t> TransformationAddConstantComposite::GetFreshIds()
+    const {
+  return {message_.fresh_id()};
 }
 
 }  // namespace fuzz

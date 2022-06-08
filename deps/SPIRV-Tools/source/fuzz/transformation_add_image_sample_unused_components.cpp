@@ -22,9 +22,8 @@ namespace fuzz {
 
 TransformationAddImageSampleUnusedComponents::
     TransformationAddImageSampleUnusedComponents(
-        const spvtools::fuzz::protobufs::
-            TransformationAddImageSampleUnusedComponents& message)
-    : message_(message) {}
+        protobufs::TransformationAddImageSampleUnusedComponents message)
+    : message_(std::move(message)) {}
 
 TransformationAddImageSampleUnusedComponents::
     TransformationAddImageSampleUnusedComponents(
@@ -111,6 +110,11 @@ TransformationAddImageSampleUnusedComponents::ToMessage() const {
   protobufs::Transformation result;
   *result.mutable_add_image_sample_unused_components() = message_;
   return result;
+}
+
+std::unordered_set<uint32_t>
+TransformationAddImageSampleUnusedComponents::GetFreshIds() const {
+  return std::unordered_set<uint32_t>();
 }
 
 }  // namespace fuzz

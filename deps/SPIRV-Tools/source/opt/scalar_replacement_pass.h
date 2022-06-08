@@ -23,14 +23,14 @@
 #include <vector>
 
 #include "source/opt/function.h"
-#include "source/opt/pass.h"
+#include "source/opt/mem_pass.h"
 #include "source/opt/type_manager.h"
 
 namespace spvtools {
 namespace opt {
 
 // Documented in optimizer.hpp
-class ScalarReplacementPass : public Pass {
+class ScalarReplacementPass : public MemPass {
  private:
   static const uint32_t kDefaultLimit = 100;
 
@@ -142,6 +142,13 @@ class ScalarReplacementPass : public Pass {
   // of |inst| and the store is not to volatile memory.
   bool CheckStore(const Instruction* inst, uint32_t index) const;
 
+  // Returns true if the DebugDeclare can be scalarized at |index|.
+  bool CheckDebugDeclare(uint32_t index) const;
+
+  // Returns true if |index| is the pointer operand of an OpImageTexelPointer
+  // instruction.
+  bool CheckImageTexelPointer(uint32_t index) const;
+
   // Creates a variable of type |typeId| from the |index|'th element of
   // |varInst|. The new variable is added to |replacements|.  If the variable
   // could not be created, then |nullptr| is appended to |replacements|.
@@ -199,6 +206,21 @@ class ScalarReplacementPass : public Pass {
   bool ReplaceWholeStore(Instruction* store,
                          const std::vector<Instruction*>& replacements);
 
+  // Replaces the DebugDeclare to the entire composite.
+  //
+  // Generates a DebugValue with Deref operation for each element in the
+  // scalarized variable from the original DebugDeclare.  Returns true if
+  // successful.
+  bool ReplaceWholeDebugDeclare(Instruction* dbg_decl,
+                                const std::vector<Instruction*>& replacements);
+
+  // Replaces the DebugValue to the entire composite.
+  //
+  // Generates a DebugValue for each element in the scalarized variable from
+  // the original DebugValue.  Returns true if successful.
+  bool ReplaceWholeDebugValue(Instruction* dbg_value,
+                              const std::vector<Instruction*>& replacements);
+
   // Replaces an access chain to the composite variable with either a direct use
   // of the appropriate replacement variable or another access chain with the
   // replacement variable as the base and one fewer indexes. Returns true if
@@ -212,10 +234,8 @@ class ScalarReplacementPass : public Pass {
   std::unique_ptr<std::unordered_set<int64_t>> GetUsedComponents(
       Instruction* inst);
 
-  // Returns an instruction defining a null constant with type |type_id|.  If
-  // one already exists, it is returned.  Otherwise a new one is created.
-  // Returns |nullptr| if the new constant could not be created.
-  Instruction* CreateNullConstant(uint32_t type_id);
+  // Returns an instruction defining an undefined value type |type_id|.
+  Instruction* GetUndef(uint32_t type_id);
 
   // Maps storage type to a pointer type enclosing that type.
   std::unordered_map<uint32_t, uint32_t> pointee_to_pointer_;

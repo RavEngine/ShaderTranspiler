@@ -26,7 +26,7 @@ namespace fuzz {
 class TransformationSwapConditionalBranchOperands : public Transformation {
  public:
   explicit TransformationSwapConditionalBranchOperands(
-      const protobufs::TransformationSwapConditionalBranchOperands& message);
+      protobufs::TransformationSwapConditionalBranchOperands message);
 
   TransformationSwapConditionalBranchOperands(
       const protobufs::InstructionDescriptor& instruction_descriptor,
@@ -45,6 +45,8 @@ class TransformationSwapConditionalBranchOperands : public Transformation {
   // operands.
   void Apply(opt::IRContext* ir_context,
              TransformationContext* transformation_context) const override;
+
+  std::unordered_set<uint32_t> GetFreshIds() const override;
 
   protobufs::Transformation ToMessage() const override;
 

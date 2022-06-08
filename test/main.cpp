@@ -15,16 +15,16 @@ int main(){
 	
 	//Create a CompileTask with the path to your shader and its stage.
 	//The path is required because this library supports the OpenGL #include extension
-	CompileTask task(path("Scene.vert"),ShaderStage::Vertex);
+	CompileTask task(path("test.fsh"),ShaderStage::Fragment);
 	
 	//configure the compile with an Options object
 	Options opt;
 	opt.mobile = false; //used for OpenGL ES or Metal iOS
-	opt.version = 15;   //stores the major and minor version, for Vulkan 1.5 use 15
+	opt.version = 23;   //stores the major and minor version, for Vulkan 1.5 use 15
 	
 	try{
 		//call CompileTo and pass the CompileTask and the Options
-		CompileResult result = s.CompileTo(task, TargetAPI::Vulkan, opt);
+		CompileResult result = s.CompileTo(task, TargetAPI::Metal, opt);
 		
 		//the shader data is stored in the data field
 		cout << (result.isBinary? "Binary" : "Plain text") << "shader created, source = " << endl;

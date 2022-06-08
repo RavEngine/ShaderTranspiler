@@ -12,11 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include "source/fuzz/fuzzer_pass_permute_function_parameters.h"
+
 #include <numeric>
 #include <vector>
 
 #include "source/fuzz/fuzzer_context.h"
-#include "source/fuzz/fuzzer_pass_permute_function_parameters.h"
 #include "source/fuzz/fuzzer_util.h"
 #include "source/fuzz/instruction_descriptor.h"
 #include "source/fuzz/transformation_permute_function_parameters.h"
@@ -27,12 +28,10 @@ namespace fuzz {
 FuzzerPassPermuteFunctionParameters::FuzzerPassPermuteFunctionParameters(
     opt::IRContext* ir_context, TransformationContext* transformation_context,
     FuzzerContext* fuzzer_context,
-    protobufs::TransformationSequence* transformations)
+    protobufs::TransformationSequence* transformations,
+    bool ignore_inapplicable_transformations)
     : FuzzerPass(ir_context, transformation_context, fuzzer_context,
-                 transformations) {}
-
-FuzzerPassPermuteFunctionParameters::~FuzzerPassPermuteFunctionParameters() =
-    default;
+                 transformations, ignore_inapplicable_transformations) {}
 
 void FuzzerPassPermuteFunctionParameters::Apply() {
   for (const auto& function : *GetIRContext()->module()) {

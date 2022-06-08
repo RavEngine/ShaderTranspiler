@@ -14,6 +14,8 @@
 
 #include "source/fuzz/transformation_add_synonym.h"
 
+#include "gtest/gtest.h"
+#include "source/fuzz/fuzzer_util.h"
 #include "source/fuzz/instruction_descriptor.h"
 #include "test/fuzz/fuzz_test_util.h"
 
@@ -68,12 +70,12 @@ TEST(TransformationAddSynonymTest, NotApplicable) {
   const auto env = SPV_ENV_UNIVERSAL_1_3;
   const auto consumer = nullptr;
   const auto context = BuildModule(env, consumer, shader, kFuzzAssembleOption);
-  ASSERT_TRUE(IsValid(env, context.get()));
-
-  FactManager fact_manager;
   spvtools::ValidatorOptions validator_options;
-  TransformationContext transformation_context(&fact_manager,
-                                               validator_options);
+  ASSERT_TRUE(fuzzerutil::IsValidAndWellFormed(context.get(), validator_options,
+                                               kConsoleMessageConsumer));
+  TransformationContext transformation_context(
+      MakeUnique<FactManager>(context.get()), validator_options);
+  transformation_context.GetFactManager()->AddFactIdIsIrrelevant(24);
 
   auto insert_before = MakeInstructionDescriptor(22, SpvOpReturn, 0);
 
@@ -86,65 +88,73 @@ TEST(TransformationAddSynonymTest, NotApplicable) {
       "Synonym type is invalid");
 #endif
 
-  // |synonym_fresh_id| is not fresh.
-  ASSERT_FALSE(
-      TransformationAddSynonym(9, protobufs::TransformationAddSynonym::ADD_ZERO,
-                               9, insert_before)
-          .IsApplicable(context.get(), transformation_context));
+  // These tests should succeed regardless of the synonym type.
+  for (int i = 0;
+       i < protobufs::TransformationAddSynonym::SynonymType_descriptor()
+               ->value_count();
+       ++i) {
+    const auto* synonym_value =
+        protobufs::TransformationAddSynonym::SynonymType_descriptor()->value(i);
+    ASSERT_TRUE(protobufs::TransformationAddSynonym::SynonymType_IsValid(
+        synonym_value->number()));
+    auto synonym_type =
+        static_cast<protobufs::TransformationAddSynonym::SynonymType>(
+            synonym_value->number());
 
-  // |result_id| is invalid.
-  ASSERT_FALSE(
-      TransformationAddSynonym(
-          40, protobufs::TransformationAddSynonym::ADD_ZERO, 40, insert_before)
-          .IsApplicable(context.get(), transformation_context));
+    // |synonym_fresh_id| is not fresh.
+    ASSERT_FALSE(TransformationAddSynonym(9, synonym_type, 9, insert_before)
+                     .IsApplicable(context.get(), transformation_context));
 
-  // Instruction with |result_id| has no type id.
-  ASSERT_FALSE(
-      TransformationAddSynonym(5, protobufs::TransformationAddSynonym::ADD_ZERO,
-                               40, insert_before)
-          .IsApplicable(context.get(), transformation_context));
+    // |result_id| is invalid.
+    ASSERT_FALSE(TransformationAddSynonym(40, synonym_type, 40, insert_before)
+                     .IsApplicable(context.get(), transformation_context));
 
-  // Instruction with |result_id| is an OpUndef.
-  ASSERT_FALSE(
-      TransformationAddSynonym(
-          25, protobufs::TransformationAddSynonym::ADD_ZERO, 40, insert_before)
-          .IsApplicable(context.get(), transformation_context));
+    // Instruction with |result_id| has no type id.
+    ASSERT_FALSE(TransformationAddSynonym(5, synonym_type, 40, insert_before)
+                     .IsApplicable(context.get(), transformation_context));
 
-  // Instruction with |result_id| is an OpConstantNull.
-  ASSERT_FALSE(
-      TransformationAddSynonym(
-          26, protobufs::TransformationAddSynonym::ADD_ZERO, 40, insert_before)
-          .IsApplicable(context.get(), transformation_context));
+    // Instruction with |result_id| is an OpUndef.
+    ASSERT_FALSE(TransformationAddSynonym(25, synonym_type, 40, insert_before)
+                     .IsApplicable(context.get(), transformation_context));
 
-  // |insert_before| is invalid.
-  ASSERT_FALSE(
-      TransformationAddSynonym(9, protobufs::TransformationAddSynonym::ADD_ZERO,
-                               40, MakeInstructionDescriptor(25, SpvOpStore, 0))
-          .IsApplicable(context.get(), transformation_context));
+    // Instruction with |result_id| is an OpConstantNull.
+    ASSERT_FALSE(TransformationAddSynonym(26, synonym_type, 40, insert_before)
+                     .IsApplicable(context.get(), transformation_context));
 
-  // Can't insert before |insert_before|.
-  ASSERT_FALSE(
-      TransformationAddSynonym(9, protobufs::TransformationAddSynonym::ADD_ZERO,
-                               40, MakeInstructionDescriptor(5, SpvOpLabel, 0))
-          .IsApplicable(context.get(), transformation_context));
-  ASSERT_FALSE(TransformationAddSynonym(
-                   9, protobufs::TransformationAddSynonym::ADD_ZERO, 40,
-                   MakeInstructionDescriptor(22, SpvOpVariable, 0))
-                   .IsApplicable(context.get(), transformation_context));
-  ASSERT_FALSE(TransformationAddSynonym(
-                   9, protobufs::TransformationAddSynonym::ADD_ZERO, 40,
-                   MakeInstructionDescriptor(25, SpvOpFunctionEnd, 0))
-                   .IsApplicable(context.get(), transformation_context));
+    // |result_id| is irrelevant.
+    ASSERT_FALSE(TransformationAddSynonym(24, synonym_type, 40, insert_before)
+                     .IsApplicable(context.get(), transformation_context));
 
-  // Domination rules are not satisfied.
-  ASSERT_FALSE(TransformationAddSynonym(
-                   27, protobufs::TransformationAddSynonym::ADD_ZERO, 40,
-                   MakeInstructionDescriptor(27, SpvOpLoad, 0))
-                   .IsApplicable(context.get(), transformation_context));
-  ASSERT_FALSE(TransformationAddSynonym(
-                   27, protobufs::TransformationAddSynonym::ADD_ZERO, 40,
-                   MakeInstructionDescriptor(22, SpvOpStore, 1))
-                   .IsApplicable(context.get(), transformation_context));
+    // |insert_before| is invalid.
+    ASSERT_FALSE(
+        TransformationAddSynonym(9, synonym_type, 40,
+                                 MakeInstructionDescriptor(25, SpvOpStore, 0))
+            .IsApplicable(context.get(), transformation_context));
+
+    // Can't insert before |insert_before|.
+    ASSERT_FALSE(
+        TransformationAddSynonym(9, synonym_type, 40,
+                                 MakeInstructionDescriptor(5, SpvOpLabel, 0))
+            .IsApplicable(context.get(), transformation_context));
+    ASSERT_FALSE(TransformationAddSynonym(
+                     9, synonym_type, 40,
+                     MakeInstructionDescriptor(22, SpvOpVariable, 0))
+                     .IsApplicable(context.get(), transformation_context));
+    ASSERT_FALSE(TransformationAddSynonym(
+                     9, synonym_type, 40,
+                     MakeInstructionDescriptor(25, SpvOpFunctionEnd, 0))
+                     .IsApplicable(context.get(), transformation_context));
+
+    // Domination rules are not satisfied.
+    ASSERT_FALSE(
+        TransformationAddSynonym(27, synonym_type, 40,
+                                 MakeInstructionDescriptor(27, SpvOpLoad, 0))
+            .IsApplicable(context.get(), transformation_context));
+    ASSERT_FALSE(
+        TransformationAddSynonym(27, synonym_type, 40,
+                                 MakeInstructionDescriptor(22, SpvOpStore, 1))
+            .IsApplicable(context.get(), transformation_context));
+  }
 }
 
 TEST(TransformationAddSynonymTest, AddZeroSubZeroMulOne) {
@@ -187,6 +197,7 @@ TEST(TransformationAddSynonymTest, AddZeroSubZeroMulOne) {
          %37 = OpTypeVector %36 2
          %38 = OpConstantTrue %36
          %39 = OpConstantComposite %37 %38 %38
+         %40 = OpConstant %6 37
           %4 = OpFunction %2 None %3
           %5 = OpLabel
                OpReturn
@@ -196,13 +207,11 @@ TEST(TransformationAddSynonymTest, AddZeroSubZeroMulOne) {
   const auto env = SPV_ENV_UNIVERSAL_1_3;
   const auto consumer = nullptr;
   const auto context = BuildModule(env, consumer, shader, kFuzzAssembleOption);
-  ASSERT_TRUE(IsValid(env, context.get()));
-
-  FactManager fact_manager;
   spvtools::ValidatorOptions validator_options;
-  TransformationContext transformation_context(&fact_manager,
-                                               validator_options);
-
+  ASSERT_TRUE(fuzzerutil::IsValidAndWellFormed(context.get(), validator_options,
+                                               kConsoleMessageConsumer));
+  TransformationContext transformation_context(
+      MakeUnique<FactManager>(context.get()), validator_options);
   auto insert_before = MakeInstructionDescriptor(5, SpvOpReturn, 0);
 
   uint32_t fresh_id = 50;
@@ -234,11 +243,35 @@ TEST(TransformationAddSynonymTest, AddZeroSubZeroMulOne) {
                                               insert_before);
       ASSERT_TRUE(
           transformation.IsApplicable(context.get(), transformation_context));
-      transformation.Apply(context.get(), &transformation_context);
-      ASSERT_TRUE(fact_manager.IsSynonymous(MakeDataDescriptor(result_id, {}),
-                                            MakeDataDescriptor(fresh_id, {})));
+      ApplyAndCheckFreshIds(transformation, context.get(),
+                            &transformation_context);
+      ASSERT_TRUE(transformation_context.GetFactManager()->IsSynonymous(
+          MakeDataDescriptor(result_id, {}), MakeDataDescriptor(fresh_id, {})));
       ++fresh_id;
     }
+  }
+  {
+    TransformationAddSynonym transformation(
+        40, protobufs::TransformationAddSynonym::BITWISE_OR, fresh_id,
+        insert_before);
+    ASSERT_TRUE(
+        transformation.IsApplicable(context.get(), transformation_context));
+    ApplyAndCheckFreshIds(transformation, context.get(),
+                          &transformation_context);
+    ASSERT_TRUE(transformation_context.GetFactManager()->IsSynonymous(
+        MakeDataDescriptor(40, {}), MakeDataDescriptor(fresh_id, {})));
+    ++fresh_id;
+  }
+  {
+    TransformationAddSynonym transformation(
+        40, protobufs::TransformationAddSynonym::BITWISE_XOR, fresh_id,
+        insert_before);
+    ASSERT_TRUE(
+        transformation.IsApplicable(context.get(), transformation_context));
+    ApplyAndCheckFreshIds(transformation, context.get(),
+                          &transformation_context);
+    ASSERT_TRUE(transformation_context.GetFactManager()->IsSynonymous(
+        MakeDataDescriptor(40, {}), MakeDataDescriptor(fresh_id, {})));
   }
 
   std::string expected_shader = R"(
@@ -280,6 +313,7 @@ TEST(TransformationAddSynonymTest, AddZeroSubZeroMulOne) {
          %37 = OpTypeVector %36 2
          %38 = OpConstantTrue %36
          %39 = OpConstantComposite %37 %38 %38
+         %40 = OpConstant %6 37
           %4 = OpFunction %2 None %3
           %5 = OpLabel
          %50 = OpIAdd %6 %9 %7
@@ -294,6 +328,8 @@ TEST(TransformationAddSynonymTest, AddZeroSubZeroMulOne) {
          %59 = OpFMul %14 %17 %16
          %60 = OpFMul %18 %23 %20
          %61 = OpIMul %24 %29 %26
+         %62 = OpBitwiseOr %6 %40 %7
+         %63 = OpBitwiseXor %6 %40 %7
                OpReturn
                OpFunctionEnd
   )";
@@ -333,13 +369,11 @@ TEST(TransformationAddSynonymTest, LogicalAndLogicalOr) {
   const auto env = SPV_ENV_UNIVERSAL_1_3;
   const auto consumer = nullptr;
   const auto context = BuildModule(env, consumer, shader, kFuzzAssembleOption);
-  ASSERT_TRUE(IsValid(env, context.get()));
-
-  FactManager fact_manager;
   spvtools::ValidatorOptions validator_options;
-  TransformationContext transformation_context(&fact_manager,
-                                               validator_options);
-
+  ASSERT_TRUE(fuzzerutil::IsValidAndWellFormed(context.get(), validator_options,
+                                               kConsoleMessageConsumer));
+  TransformationContext transformation_context(
+      MakeUnique<FactManager>(context.get()), validator_options);
   auto insert_before = MakeInstructionDescriptor(5, SpvOpReturn, 0);
 
   uint32_t fresh_id = 50;
@@ -362,9 +396,10 @@ TEST(TransformationAddSynonymTest, LogicalAndLogicalOr) {
                                               insert_before);
       ASSERT_TRUE(
           transformation.IsApplicable(context.get(), transformation_context));
-      transformation.Apply(context.get(), &transformation_context);
-      ASSERT_TRUE(fact_manager.IsSynonymous(MakeDataDescriptor(result_id, {}),
-                                            MakeDataDescriptor(fresh_id, {})));
+      ApplyAndCheckFreshIds(transformation, context.get(),
+                            &transformation_context);
+      ASSERT_TRUE(transformation_context.GetFactManager()->IsSynonymous(
+          MakeDataDescriptor(result_id, {}), MakeDataDescriptor(fresh_id, {})));
       ++fresh_id;
     }
   }
@@ -427,13 +462,11 @@ TEST(TransformationAddSynonymTest, LogicalAndConstantIsNotPresent) {
   const auto env = SPV_ENV_UNIVERSAL_1_3;
   const auto consumer = nullptr;
   const auto context = BuildModule(env, consumer, shader, kFuzzAssembleOption);
-  ASSERT_TRUE(IsValid(env, context.get()));
-
-  FactManager fact_manager;
   spvtools::ValidatorOptions validator_options;
-  TransformationContext transformation_context(&fact_manager,
-                                               validator_options);
-
+  ASSERT_TRUE(fuzzerutil::IsValidAndWellFormed(context.get(), validator_options,
+                                               kConsoleMessageConsumer));
+  TransformationContext transformation_context(
+      MakeUnique<FactManager>(context.get()), validator_options);
   auto insert_before = MakeInstructionDescriptor(5, SpvOpReturn, 0);
   const auto synonym_type = protobufs::TransformationAddSynonym::LOGICAL_AND;
 
@@ -467,13 +500,11 @@ TEST(TransformationAddSynonymTest, LogicalOrConstantIsNotPresent) {
   const auto env = SPV_ENV_UNIVERSAL_1_3;
   const auto consumer = nullptr;
   const auto context = BuildModule(env, consumer, shader, kFuzzAssembleOption);
-  ASSERT_TRUE(IsValid(env, context.get()));
-
-  FactManager fact_manager;
   spvtools::ValidatorOptions validator_options;
-  TransformationContext transformation_context(&fact_manager,
-                                               validator_options);
-
+  ASSERT_TRUE(fuzzerutil::IsValidAndWellFormed(context.get(), validator_options,
+                                               kConsoleMessageConsumer));
+  TransformationContext transformation_context(
+      MakeUnique<FactManager>(context.get()), validator_options);
   auto insert_before = MakeInstructionDescriptor(5, SpvOpReturn, 0);
   const auto synonym_type = protobufs::TransformationAddSynonym::LOGICAL_OR;
 
@@ -527,13 +558,11 @@ TEST(TransformationAddSynonymTest, CopyObject) {
   const auto env = SPV_ENV_UNIVERSAL_1_3;
   const auto consumer = nullptr;
   const auto context = BuildModule(env, consumer, shader, kFuzzAssembleOption);
-  ASSERT_TRUE(IsValid(env, context.get()));
-
-  FactManager fact_manager;
   spvtools::ValidatorOptions validator_options;
-  TransformationContext transformation_context(&fact_manager,
-                                               validator_options);
-
+  ASSERT_TRUE(fuzzerutil::IsValidAndWellFormed(context.get(), validator_options,
+                                               kConsoleMessageConsumer));
+  TransformationContext transformation_context(
+      MakeUnique<FactManager>(context.get()), validator_options);
   auto insert_before = MakeInstructionDescriptor(5, SpvOpReturn, 0);
   const auto synonym_type = protobufs::TransformationAddSynonym::COPY_OBJECT;
 
@@ -546,9 +575,10 @@ TEST(TransformationAddSynonymTest, CopyObject) {
                                             insert_before);
     ASSERT_TRUE(
         transformation.IsApplicable(context.get(), transformation_context));
-    transformation.Apply(context.get(), &transformation_context);
-    ASSERT_TRUE(fact_manager.IsSynonymous(MakeDataDescriptor(result_id, {}),
-                                          MakeDataDescriptor(fresh_id, {})));
+    ApplyAndCheckFreshIds(transformation, context.get(),
+                          &transformation_context);
+    ASSERT_TRUE(transformation_context.GetFactManager()->IsSynonymous(
+        MakeDataDescriptor(result_id, {}), MakeDataDescriptor(fresh_id, {})));
     ++fresh_id;
   }
 
@@ -624,13 +654,11 @@ TEST(TransformationAddSynonymTest, CopyBooleanConstants) {
   const auto env = SPV_ENV_UNIVERSAL_1_3;
   const auto consumer = nullptr;
   const auto context = BuildModule(env, consumer, shader, kFuzzAssembleOption);
-  ASSERT_TRUE(IsValid(env, context.get()));
-
-  FactManager fact_manager;
   spvtools::ValidatorOptions validator_options;
-  TransformationContext transformation_context(&fact_manager,
-                                               validator_options);
-
+  ASSERT_TRUE(fuzzerutil::IsValidAndWellFormed(context.get(), validator_options,
+                                               kConsoleMessageConsumer));
+  TransformationContext transformation_context(
+      MakeUnique<FactManager>(context.get()), validator_options);
   ASSERT_EQ(0, transformation_context.GetFactManager()
                    ->GetIdsForWhichSynonymsAreKnown()
                    .size());
@@ -640,7 +668,7 @@ TEST(TransformationAddSynonymTest, CopyBooleanConstants) {
         7, protobufs::TransformationAddSynonym::COPY_OBJECT, 100,
         MakeInstructionDescriptor(5, SpvOpReturn, 0));
     ASSERT_TRUE(copy_true.IsApplicable(context.get(), transformation_context));
-    copy_true.Apply(context.get(), &transformation_context);
+    ApplyAndCheckFreshIds(copy_true, context.get(), &transformation_context);
 
     std::vector<uint32_t> ids_for_which_synonyms_are_known =
         transformation_context.GetFactManager()
@@ -661,7 +689,7 @@ TEST(TransformationAddSynonymTest, CopyBooleanConstants) {
         8, protobufs::TransformationAddSynonym::COPY_OBJECT, 101,
         MakeInstructionDescriptor(100, SpvOpReturn, 0));
     ASSERT_TRUE(copy_false.IsApplicable(context.get(), transformation_context));
-    copy_false.Apply(context.get(), &transformation_context);
+    ApplyAndCheckFreshIds(copy_false, context.get(), &transformation_context);
     std::vector<uint32_t> ids_for_which_synonyms_are_known =
         transformation_context.GetFactManager()
             ->GetIdsForWhichSynonymsAreKnown();
@@ -682,7 +710,8 @@ TEST(TransformationAddSynonymTest, CopyBooleanConstants) {
         MakeInstructionDescriptor(5, SpvOpReturn, 0));
     ASSERT_TRUE(
         copy_false_again.IsApplicable(context.get(), transformation_context));
-    copy_false_again.Apply(context.get(), &transformation_context);
+    ApplyAndCheckFreshIds(copy_false_again, context.get(),
+                          &transformation_context);
     std::vector<uint32_t> ids_for_which_synonyms_are_known =
         transformation_context.GetFactManager()
             ->GetIdsForWhichSynonymsAreKnown();
@@ -704,7 +733,8 @@ TEST(TransformationAddSynonymTest, CopyBooleanConstants) {
         MakeInstructionDescriptor(102, SpvOpReturn, 0));
     ASSERT_TRUE(
         copy_true_again.IsApplicable(context.get(), transformation_context));
-    copy_true_again.Apply(context.get(), &transformation_context);
+    ApplyAndCheckFreshIds(copy_true_again, context.get(),
+                          &transformation_context);
     std::vector<uint32_t> ids_for_which_synonyms_are_known =
         transformation_context.GetFactManager()
             ->GetIdsForWhichSynonymsAreKnown();
@@ -932,13 +962,11 @@ TEST(TransformationAddSynonymTest, CheckIllegalCases) {
   const auto env = SPV_ENV_UNIVERSAL_1_3;
   const auto consumer = nullptr;
   const auto context = BuildModule(env, consumer, shader, kFuzzAssembleOption);
-  ASSERT_TRUE(IsValid(env, context.get()));
-
-  FactManager fact_manager;
   spvtools::ValidatorOptions validator_options;
-  TransformationContext transformation_context(&fact_manager,
-                                               validator_options);
-
+  ASSERT_TRUE(fuzzerutil::IsValidAndWellFormed(context.get(), validator_options,
+                                               kConsoleMessageConsumer));
+  TransformationContext transformation_context(
+      MakeUnique<FactManager>(context.get()), validator_options);
   // Inapplicable because %18 is decorated.
   ASSERT_FALSE(TransformationAddSynonym(
                    18, protobufs::TransformationAddSynonym::COPY_OBJECT, 200,
@@ -1127,13 +1155,11 @@ TEST(TransformationAddSynonymTest, MiscellaneousCopies) {
   const auto env = SPV_ENV_UNIVERSAL_1_3;
   const auto consumer = nullptr;
   const auto context = BuildModule(env, consumer, shader, kFuzzAssembleOption);
-  ASSERT_TRUE(IsValid(env, context.get()));
-
-  FactManager fact_manager;
   spvtools::ValidatorOptions validator_options;
-  TransformationContext transformation_context(&fact_manager,
-                                               validator_options);
-
+  ASSERT_TRUE(fuzzerutil::IsValidAndWellFormed(context.get(), validator_options,
+                                               kConsoleMessageConsumer));
+  TransformationContext transformation_context(
+      MakeUnique<FactManager>(context.get()), validator_options);
   std::vector<TransformationAddSynonym> transformations = {
       TransformationAddSynonym(
           19, protobufs::TransformationAddSynonym::COPY_OBJECT, 100,
@@ -1160,10 +1186,12 @@ TEST(TransformationAddSynonymTest, MiscellaneousCopies) {
   for (auto& transformation : transformations) {
     ASSERT_TRUE(
         transformation.IsApplicable(context.get(), transformation_context));
-    transformation.Apply(context.get(), &transformation_context);
+    ApplyAndCheckFreshIds(transformation, context.get(),
+                          &transformation_context);
   }
 
-  ASSERT_TRUE(IsValid(env, context.get()));
+  ASSERT_TRUE(fuzzerutil::IsValidAndWellFormed(context.get(), validator_options,
+                                               kConsoleMessageConsumer));
 
   std::string after_transformation = R"(
                OpCapability Shader
@@ -1214,9 +1242,10 @@ TEST(TransformationAddSynonymTest, MiscellaneousCopies) {
   ASSERT_TRUE(IsEqual(env, after_transformation, context.get()));
 }
 
-TEST(TransformationAddSynonymTest, DoNotCopyNullOrUndefPointers) {
+TEST(TransformationAddSynonymTest, DoNotCopyNullPointers) {
   std::string shader = R"(
                OpCapability Shader
+               OpCapability VariablePointers
           %1 = OpExtInstImport "GLSL.std.450"
                OpMemoryModel Logical GLSL450
                OpEntryPoint Fragment %4 "main"
@@ -1227,7 +1256,6 @@ TEST(TransformationAddSynonymTest, DoNotCopyNullOrUndefPointers) {
           %6 = OpTypeInt 32 1
           %7 = OpTypePointer Function %6
           %8 = OpConstantNull %7
-          %9 = OpUndef %7
           %4 = OpFunction %2 None %3
           %5 = OpLabel
                OpReturn
@@ -1237,22 +1265,14 @@ TEST(TransformationAddSynonymTest, DoNotCopyNullOrUndefPointers) {
   const auto env = SPV_ENV_UNIVERSAL_1_3;
   const auto consumer = nullptr;
   const auto context = BuildModule(env, consumer, shader, kFuzzAssembleOption);
-  ASSERT_TRUE(IsValid(env, context.get()));
-
-  FactManager fact_manager;
   spvtools::ValidatorOptions validator_options;
-  TransformationContext transformation_context(&fact_manager,
-                                               validator_options);
-
+  ASSERT_TRUE(fuzzerutil::IsValidAndWellFormed(context.get(), validator_options,
+                                               kConsoleMessageConsumer));
+  TransformationContext transformation_context(
+      MakeUnique<FactManager>(context.get()), validator_options);
   // Illegal to copy null.
   ASSERT_FALSE(TransformationAddSynonym(
                    8, protobufs::TransformationAddSynonym::COPY_OBJECT, 100,
-                   MakeInstructionDescriptor(5, SpvOpReturn, 0))
-                   .IsApplicable(context.get(), transformation_context));
-
-  // Illegal to copy an OpUndef of pointer type.
-  ASSERT_FALSE(TransformationAddSynonym(
-                   9, protobufs::TransformationAddSynonym::COPY_OBJECT, 100,
                    MakeInstructionDescriptor(5, SpvOpReturn, 0))
                    .IsApplicable(context.get(), transformation_context));
 }
@@ -1283,13 +1303,11 @@ TEST(TransformationAddSynonymTest, PropagateIrrelevantPointeeFact) {
   const auto env = SPV_ENV_UNIVERSAL_1_3;
   const auto consumer = nullptr;
   const auto context = BuildModule(env, consumer, shader, kFuzzAssembleOption);
-  ASSERT_TRUE(IsValid(env, context.get()));
-
-  FactManager fact_manager;
   spvtools::ValidatorOptions validator_options;
-  TransformationContext transformation_context(&fact_manager,
-                                               validator_options);
-
+  ASSERT_TRUE(fuzzerutil::IsValidAndWellFormed(context.get(), validator_options,
+                                               kConsoleMessageConsumer));
+  TransformationContext transformation_context(
+      MakeUnique<FactManager>(context.get()), validator_options);
   transformation_context.GetFactManager()->AddFactValueOfPointeeIsIrrelevant(8);
 
   TransformationAddSynonym transformation1(
@@ -1304,13 +1322,16 @@ TEST(TransformationAddSynonymTest, PropagateIrrelevantPointeeFact) {
 
   ASSERT_TRUE(
       transformation1.IsApplicable(context.get(), transformation_context));
-  transformation1.Apply(context.get(), &transformation_context);
+  ApplyAndCheckFreshIds(transformation1, context.get(),
+                        &transformation_context);
   ASSERT_TRUE(
       transformation2.IsApplicable(context.get(), transformation_context));
-  transformation2.Apply(context.get(), &transformation_context);
+  ApplyAndCheckFreshIds(transformation2, context.get(),
+                        &transformation_context);
   ASSERT_TRUE(
       transformation3.IsApplicable(context.get(), transformation_context));
-  transformation3.Apply(context.get(), &transformation_context);
+  ApplyAndCheckFreshIds(transformation3, context.get(),
+                        &transformation_context);
 
   ASSERT_TRUE(
       transformation_context.GetFactManager()->PointeeValueIsIrrelevant(8));
@@ -1324,7 +1345,7 @@ TEST(TransformationAddSynonymTest, PropagateIrrelevantPointeeFact) {
       transformation_context.GetFactManager()->PointeeValueIsIrrelevant(101));
 }
 
-TEST(TransformationAddSynonym, DoNotCopyOpSampledImage) {
+TEST(TransformationAddSynonymTest, DoNotCopyOpSampledImage) {
   // This checks that we do not try to copy the result id of an OpSampledImage
   // instruction.
   std::string shader = R"(
@@ -1370,16 +1391,101 @@ TEST(TransformationAddSynonym, DoNotCopyOpSampledImage) {
   const auto consumer = nullptr;
   const auto context = BuildModule(env, consumer, shader, kFuzzAssembleOption);
 
-  FactManager fact_manager;
   spvtools::ValidatorOptions validator_options;
-  TransformationContext transformation_context(&fact_manager,
-                                               validator_options);
-
+  TransformationContext transformation_context(
+      MakeUnique<FactManager>(context.get()), validator_options);
   ASSERT_FALSE(
       TransformationAddSynonym(
           216, protobufs::TransformationAddSynonym::COPY_OBJECT, 500,
           MakeInstructionDescriptor(217, SpvOpImageSampleImplicitLod, 0))
           .IsApplicable(context.get(), transformation_context));
+}
+
+TEST(TransformationAddSynonymTest, DoNotCopyVoidRunctionResult) {
+  // This checks that we do not try to copy the result of a void function.
+  std::string shader = R"(
+               OpCapability Shader
+          %1 = OpExtInstImport "GLSL.std.450"
+               OpMemoryModel Logical GLSL450
+               OpEntryPoint Fragment %4 "main"
+               OpExecutionMode %4 OriginUpperLeft
+               OpSource ESSL 320
+               OpName %4 "main"
+               OpName %6 "foo("
+          %2 = OpTypeVoid
+          %3 = OpTypeFunction %2
+          %4 = OpFunction %2 None %3
+          %5 = OpLabel
+          %8 = OpFunctionCall %2 %6
+               OpReturn
+               OpFunctionEnd
+          %6 = OpFunction %2 None %3
+          %7 = OpLabel
+               OpReturn
+               OpFunctionEnd
+  )";
+
+  const auto env = SPV_ENV_UNIVERSAL_1_3;
+  const auto consumer = nullptr;
+  const auto context = BuildModule(env, consumer, shader, kFuzzAssembleOption);
+
+  spvtools::ValidatorOptions validator_options;
+  TransformationContext transformation_context(
+      MakeUnique<FactManager>(context.get()), validator_options);
+  ASSERT_FALSE(TransformationAddSynonym(
+                   8, protobufs::TransformationAddSynonym::COPY_OBJECT, 500,
+                   MakeInstructionDescriptor(8, SpvOpReturn, 0))
+                   .IsApplicable(context.get(), transformation_context));
+}
+
+TEST(TransformationAddSynonymTest, HandlesDeadBlocks) {
+  std::string shader = R"(
+               OpCapability Shader
+          %1 = OpExtInstImport "GLSL.std.450"
+               OpMemoryModel Logical GLSL450
+               OpEntryPoint Fragment %4 "main"
+               OpExecutionMode %4 OriginUpperLeft
+               OpSource ESSL 320
+          %2 = OpTypeVoid
+          %3 = OpTypeFunction %2
+          %6 = OpTypeBool
+          %7 = OpConstantTrue %6
+         %11 = OpTypePointer Function %6
+          %4 = OpFunction %2 None %3
+          %5 = OpLabel
+         %12 = OpVariable %11 Function
+               OpSelectionMerge %10 None
+               OpBranchConditional %7 %8 %9
+          %8 = OpLabel
+               OpBranch %10
+          %9 = OpLabel
+               OpBranch %10
+         %10 = OpLabel
+               OpReturn
+               OpFunctionEnd
+  )";
+
+  const auto env = SPV_ENV_UNIVERSAL_1_3;
+  const auto consumer = nullptr;
+  const auto context = BuildModule(env, consumer, shader, kFuzzAssembleOption);
+
+  spvtools::ValidatorOptions validator_options;
+  TransformationContext transformation_context(
+      MakeUnique<FactManager>(context.get()), validator_options);
+
+  transformation_context.GetFactManager()->AddFactBlockIsDead(9);
+
+  auto insert_before = MakeInstructionDescriptor(9, SpvOpBranch, 0);
+
+  ASSERT_FALSE(TransformationAddSynonym(
+                   7, protobufs::TransformationAddSynonym::COPY_OBJECT, 100,
+                   insert_before)
+                   .IsApplicable(context.get(), transformation_context));
+
+  ASSERT_FALSE(TransformationAddSynonym(
+                   12, protobufs::TransformationAddSynonym::COPY_OBJECT, 100,
+                   insert_before)
+                   .IsApplicable(context.get(), transformation_context));
 }
 
 }  // namespace

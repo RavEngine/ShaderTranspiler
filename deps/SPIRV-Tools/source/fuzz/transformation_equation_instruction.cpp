@@ -21,8 +21,8 @@ namespace spvtools {
 namespace fuzz {
 
 TransformationEquationInstruction::TransformationEquationInstruction(
-    const spvtools::fuzz::protobufs::TransformationEquationInstruction& message)
-    : message_(message) {}
+    protobufs::TransformationEquationInstruction message)
+    : message_(std::move(message)) {}
 
 TransformationEquationInstruction::TransformationEquationInstruction(
     uint32_t fresh_id, SpvOp opcode, const std::vector<uint32_t>& in_operand_id,
@@ -50,8 +50,8 @@ bool TransformationEquationInstruction::IsApplicable(
   if (!insert_before) {
     return false;
   }
-  // The input ids must all exist, not be OpUndef, and be available before this
-  // instruction.
+  // The input ids must all exist, not be OpUndef, not be irrelevant, and be
+  // available before this instruction.
   for (auto id : message_.in_operand_id()) {
     auto inst = ir_context->get_def_use_mgr()->GetDef(id);
     if (!inst) {
@@ -84,17 +84,25 @@ void TransformationEquationInstruction::Apply(
     rhs_id.push_back(id);
   }
 
-  FindInstruction(message_.instruction_to_insert_before(), ir_context)
-      ->InsertBefore(MakeUnique<opt::Instruction>(
+  auto insert_before =
+      FindInstruction(message_.instruction_to_insert_before(), ir_context);
+  opt::Instruction* new_instruction =
+      insert_before->InsertBefore(MakeUnique<opt::Instruction>(
           ir_context, static_cast<SpvOp>(message_.opcode()),
           MaybeGetResultTypeId(ir_context), message_.fresh_id(),
           std::move(in_operands)));
 
-  ir_context->InvalidateAnalysesExceptFor(opt::IRContext::kAnalysisNone);
+  ir_context->get_def_use_mgr()->AnalyzeInstDefUse(new_instruction);
+  ir_context->set_instr_block(new_instruction,
+                              ir_context->get_instr_block(insert_before));
 
-  transformation_context->GetFactManager()->AddFactIdEquation(
-      message_.fresh_id(), static_cast<SpvOp>(message_.opcode()), rhs_id,
-      ir_context);
+  // Add an equation fact as long as the result id is not irrelevant (it could
+  // be if we are inserting into a dead block).
+  if (!transformation_context->GetFactManager()->IdIsIrrelevant(
+          message_.fresh_id())) {
+    transformation_context->GetFactManager()->AddFactIdEquation(
+        message_.fresh_id(), static_cast<SpvOp>(message_.opcode()), rhs_id);
+  }
 }
 
 protobufs::Transformation TransformationEquationInstruction::ToMessage() const {
@@ -281,6 +289,11 @@ uint32_t TransformationEquationInstruction::MaybeGetResultTypeId(
       assert(false && "Inappropriate opcode for equation instruction.");
       return 0;
   }
+}
+
+std::unordered_set<uint32_t> TransformationEquationInstruction::GetFreshIds()
+    const {
+  return {message_.fresh_id()};
 }
 
 }  // namespace fuzz

@@ -27,12 +27,10 @@ FuzzerPassAddImageSampleUnusedComponents::
         opt::IRContext* ir_context,
         TransformationContext* transformation_context,
         FuzzerContext* fuzzer_context,
-        protobufs::TransformationSequence* transformations)
+        protobufs::TransformationSequence* transformations,
+        bool ignore_inapplicable_transformations)
     : FuzzerPass(ir_context, transformation_context, fuzzer_context,
-                 transformations) {}
-
-FuzzerPassAddImageSampleUnusedComponents::
-    ~FuzzerPassAddImageSampleUnusedComponents() = default;
+                 transformations, ignore_inapplicable_transformations) {}
 
 void FuzzerPassAddImageSampleUnusedComponents::Apply() {
   // SPIR-V module to help understand the transformation.
@@ -184,7 +182,7 @@ void FuzzerPassAddImageSampleUnusedComponents::Apply() {
          // FindOrCreateZeroConstant
          // %20 = OpConstant %4 0
          // %21 = OpConstantComposite %5 %20 %20
-         FindOrCreateZeroConstant(zero_constant_type_id)},
+         FindOrCreateZeroConstant(zero_constant_type_id, true)},
         MakeInstructionDescriptor(GetIRContext(), instruction),
         coordinate_with_unused_components_id));
 

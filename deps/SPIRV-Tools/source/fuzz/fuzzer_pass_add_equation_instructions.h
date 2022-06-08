@@ -29,9 +29,8 @@ class FuzzerPassAddEquationInstructions : public FuzzerPass {
   FuzzerPassAddEquationInstructions(
       opt::IRContext* ir_context, TransformationContext* transformation_context,
       FuzzerContext* fuzzer_context,
-      protobufs::TransformationSequence* transformations);
-
-  ~FuzzerPassAddEquationInstructions();
+      protobufs::TransformationSequence* transformations,
+      bool ignore_inapplicable_transformations);
 
   void Apply() override;
 
@@ -49,6 +48,14 @@ class FuzzerPassAddEquationInstructions : public FuzzerPass {
   // Yields those instructions in |instructions| that have boolean scalar or
   // vector result type.
   std::vector<opt::Instruction*> GetBooleanInstructions(
+      const std::vector<opt::Instruction*>& instructions) const;
+
+  // Yields those instructions in |instructions| that have a scalar numerical or
+  // a vector of numerical components type. Only 16, 32 and 64-bit numericals
+  // are supported if both OpTypeInt and OpTypeFloat instructions can be created
+  // with the specified width (e.g. for 16-bit types both Float16 and Int16
+  // capabilities must be present).
+  std::vector<opt::Instruction*> GetNumericalInstructions(
       const std::vector<opt::Instruction*>& instructions) const;
 
   // Requires that |instructions| are scalars or vectors of some type.  Returns

@@ -1,3 +1,3 @@
 mkdir -p build && cd build
-cmake -G "Xcode" ..
+cmake -G "Xcode" -Wno-dev ..
 

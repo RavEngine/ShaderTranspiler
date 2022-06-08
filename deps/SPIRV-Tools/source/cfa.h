@@ -42,7 +42,7 @@ class CFA {
 
   /// Returns true if a block with @p id is found in the @p work_list vector
   ///
-  /// @param[in] work_list  Set of blocks visited in the the depth first
+  /// @param[in] work_list  Set of blocks visited in the depth first
   /// traversal
   ///                       of the CFG
   /// @param[in] id         The ID of the block being checked
@@ -127,7 +127,7 @@ class CFA {
 template <class BB>
 bool CFA<BB>::FindInWorkList(const std::vector<block_info>& work_list,
                              uint32_t id) {
-  for (const auto b : work_list) {
+  for (const auto& b : work_list) {
     if (b.block->id() == id) return true;
   }
   return false;

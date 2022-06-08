@@ -25,11 +25,10 @@ namespace fuzz {
 FuzzerPassAddCopyMemory::FuzzerPassAddCopyMemory(
     opt::IRContext* ir_context, TransformationContext* transformation_context,
     FuzzerContext* fuzzer_context,
-    protobufs::TransformationSequence* transformations)
+    protobufs::TransformationSequence* transformations,
+    bool ignore_inapplicable_transformations)
     : FuzzerPass(ir_context, transformation_context, fuzzer_context,
-                 transformations) {}
-
-FuzzerPassAddCopyMemory::~FuzzerPassAddCopyMemory() = default;
+                 transformations, ignore_inapplicable_transformations) {}
 
 void FuzzerPassAddCopyMemory::Apply() {
   ForEachInstructionWithInstructionDescriptor(
@@ -74,7 +73,7 @@ void FuzzerPassAddCopyMemory::Apply() {
         ApplyTransformation(TransformationAddCopyMemory(
             instruction_descriptor, GetFuzzerContext()->GetFreshId(),
             inst->result_id(), storage_class,
-            FindOrCreateZeroConstant(pointee_type_id)));
+            FindOrCreateZeroConstant(pointee_type_id, false)));
       });
 }
 

@@ -448,6 +448,8 @@ OpFunctionEnd
   CompileSuccessfully(text, SPV_ENV_VULKAN_1_0);
   EXPECT_EQ(SPV_ERROR_INVALID_DATA, ValidateInstructions(SPV_ENV_VULKAN_1_0));
   EXPECT_THAT(getDiagnosticString(),
+              AnyVUID("VUID-StandaloneSpirv-Location-04918"));
+  EXPECT_THAT(getDiagnosticString(),
               HasSubstr("Members cannot be assigned a location"));
 }
 
@@ -475,6 +477,8 @@ OpFunctionEnd
 
   CompileSuccessfully(text, SPV_ENV_VULKAN_1_0);
   EXPECT_EQ(SPV_ERROR_INVALID_DATA, ValidateInstructions(SPV_ENV_VULKAN_1_0));
+  EXPECT_THAT(getDiagnosticString(),
+              AnyVUID("VUID-StandaloneSpirv-Location-04918"));
   EXPECT_THAT(getDiagnosticString(),
               HasSubstr("Members cannot be assigned a location"));
 }
@@ -1220,9 +1224,11 @@ OpFunctionEnd
 TEST_F(ValidateInterfacesTest, VulkanLocationsIndexGLCompute) {
   const std::string text = R"(
 OpCapability Shader
+OpCapability Geometry
 OpMemoryModel Logical GLSL450
-OpEntryPoint GLCompute %main "main" %var1
-OpExecutionMode %main LocalSize 1 1 1
+OpEntryPoint Geometry %main "main" %var1
+OpExecutionMode %main Triangles
+OpExecutionMode %main OutputPoints
 OpDecorate %var1 Location 1
 OpDecorate %var1 Index 1
 %void = OpTypeVoid
@@ -1265,10 +1271,9 @@ OpFunctionEnd
 )";
 
   CompileSuccessfully(text, SPV_ENV_VULKAN_1_0);
-  EXPECT_EQ(SPV_ERROR_INVALID_DATA, ValidateInstructions(SPV_ENV_VULKAN_1_0));
-  EXPECT_THAT(
-      getDiagnosticString(),
-      HasSubstr("Index can only be applied to Fragment output variables"));
+  EXPECT_EQ(SPV_ERROR_INVALID_ID, ValidateInstructions(SPV_ENV_VULKAN_1_0));
+  EXPECT_THAT(getDiagnosticString(),
+              HasSubstr("must be in the Output storage class"));
 }
 
 TEST_F(ValidateInterfacesTest, VulkanLocationsArrayWithComponent) {
@@ -1377,6 +1382,158 @@ TEST_F(ValidateInterfacesTest, VulkanLocationsLargeLocation) {
 
   CompileSuccessfully(text, SPV_ENV_VULKAN_1_0);
   EXPECT_EQ(SPV_SUCCESS, ValidateInstructions(SPV_ENV_VULKAN_1_0));
+}
+
+TEST_F(ValidateInterfacesTest, VulkanLocationMeshShader) {
+  const std::string text = R"(
+OpCapability Shader
+OpCapability MeshShadingNV
+OpExtension "SPV_NV_mesh_shader"
+OpMemoryModel Logical GLSL450
+OpEntryPoint MeshNV %foo "foo" %in
+OpExecutionMode %foo LocalSize 1 1 1
+OpDecorate %block Block
+OpMemberDecorate %block 0 PerTaskNV
+OpMemberDecorate %block 0 Offset 0
+%void = OpTypeVoid
+%int = OpTypeInt 32 0
+%int_32 = OpConstant %int 32
+%array = OpTypeArray %int %int_32
+%block = OpTypeStruct %array
+%ptr_input_block = OpTypePointer Input %block
+%in = OpVariable %ptr_input_block Input
+%void_fn = OpTypeFunction %void
+%foo = OpFunction %void None %void_fn
+%entry = OpLabel
+OpReturn
+OpFunctionEnd
+)";
+
+  CompileSuccessfully(text, SPV_ENV_VULKAN_1_2);
+  EXPECT_EQ(SPV_SUCCESS, ValidateInstructions(SPV_ENV_VULKAN_1_2));
+}
+
+TEST_F(ValidateInterfacesTest, VulkanLocationArrayWithComponent1) {
+  const std::string text = R"(
+OpCapability Shader
+OpMemoryModel Logical GLSL450
+OpEntryPoint Fragment %main "main" %in
+OpExecutionMode %main OriginUpperLeft
+OpDecorate %struct Block
+OpMemberDecorate %struct 0 Location 0
+OpMemberDecorate %struct 0 Component 0
+OpMemberDecorate %struct 1 Location 0
+OpMemberDecorate %struct 1 Component 1
+%void = OpTypeVoid
+%void_fn = OpTypeFunction %void
+%float = OpTypeFloat 32
+%int = OpTypeInt 32 0
+%int_2 = OpConstant %int 2
+%float_arr = OpTypeArray %float %int_2
+%struct = OpTypeStruct %float_arr %float_arr
+%ptr = OpTypePointer Input %struct
+%in = OpVariable %ptr Input
+%main = OpFunction %void None %void_fn
+%entry = OpLabel
+OpReturn
+OpFunctionEnd
+)";
+
+  CompileSuccessfully(text, SPV_ENV_VULKAN_1_0);
+  EXPECT_EQ(SPV_SUCCESS, ValidateInstructions(SPV_ENV_VULKAN_1_0));
+}
+
+TEST_F(ValidateInterfacesTest, VulkanLocationArrayWithComponent2) {
+  const std::string text = R"(
+OpCapability Shader
+OpCapability Float64
+OpMemoryModel Logical GLSL450
+OpEntryPoint Fragment %main "main" %in
+OpExecutionMode %main OriginUpperLeft
+OpDecorate %struct Block
+OpMemberDecorate %struct 0 Location 0
+OpMemberDecorate %struct 0 Component 0
+OpMemberDecorate %struct 1 Location 0
+OpMemberDecorate %struct 1 Component 1
+%void = OpTypeVoid
+%void_fn = OpTypeFunction %void
+%float = OpTypeFloat 32
+%double = OpTypeFloat 64
+%int = OpTypeInt 32 0
+%int_2 = OpConstant %int 2
+%double_arr = OpTypeArray %double %int_2
+%struct = OpTypeStruct %float %double_arr
+%ptr = OpTypePointer Input %struct
+%in = OpVariable %ptr Input
+%main = OpFunction %void None %void_fn
+%entry = OpLabel
+OpReturn
+OpFunctionEnd
+)";
+
+  CompileSuccessfully(text, SPV_ENV_VULKAN_1_0);
+  EXPECT_EQ(SPV_SUCCESS, ValidateInstructions(SPV_ENV_VULKAN_1_0));
+}
+
+TEST_F(ValidateInterfacesTest, DuplicateInterfaceVariableSuccess) {
+  const std::string text = R"(
+OpCapability Shader
+OpMemoryModel Logical GLSL450
+OpEntryPoint Fragment %main "main" %in %out %in
+OpExecutionMode %main OriginUpperLeft
+OpDecorate %in Location 0
+OpDecorate %out Location 0
+%void = OpTypeVoid
+%float = OpTypeFloat 32
+%in_ptr = OpTypePointer Input %float
+%out_ptr = OpTypePointer Output %float
+%in = OpVariable %in_ptr Input
+%out = OpVariable %out_ptr Output
+%void_fn = OpTypeFunction %void
+%main = OpFunction %void None %void_fn
+%entry = OpLabel
+OpReturn
+OpFunctionEnd
+)";
+
+  CompileSuccessfully(text, SPV_ENV_VULKAN_1_0);
+  EXPECT_EQ(SPV_SUCCESS, ValidateInstructions(SPV_ENV_VULKAN_1_0));
+}
+
+TEST_F(ValidateInterfacesTest, StructWithBuiltinsMissingBlock_Bad) {
+  // See https://github.com/KhronosGroup/SPIRV-Registry/issues/134
+  //
+  // When a shader input or output is a struct that does not have Block,
+  // then it must have a Location.
+  // But BuiltIns must not have locations.
+  const std::string text = R"(
+OpCapability Shader
+OpMemoryModel Logical GLSL450
+OpEntryPoint Fragment %main "main" %in
+OpExecutionMode %main OriginUpperLeft
+; %struct needs a Block decoration
+OpMemberDecorate %struct 0 BuiltIn Position
+%void = OpTypeVoid
+%float = OpTypeFloat 32
+%v4float = OpTypeVector %float 4
+%struct = OpTypeStruct %v4float
+%in_ptr = OpTypePointer Input %struct
+%in = OpVariable %in_ptr Input
+%void_fn = OpTypeFunction %void
+%main = OpFunction %void None %void_fn
+%entry = OpLabel
+OpReturn
+OpFunctionEnd
+)";
+
+  CompileSuccessfully(text, SPV_ENV_VULKAN_1_0);
+  EXPECT_EQ(SPV_ERROR_INVALID_DATA, ValidateInstructions(SPV_ENV_VULKAN_1_0));
+  EXPECT_THAT(getDiagnosticString(),
+              AnyVUID("VUID-StandaloneSpirv-Location-04919"));
+  EXPECT_THAT(
+      getDiagnosticString(),
+      HasSubstr(
+          "Interface struct has no Block decoration but has BuiltIn members."));
 }
 
 }  // namespace

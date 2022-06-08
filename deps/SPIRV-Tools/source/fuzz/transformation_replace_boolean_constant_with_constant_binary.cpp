@@ -111,9 +111,9 @@ bool unsigned_int_binop_evaluates_to(T lhs, T rhs, SpvOp binop,
 
 TransformationReplaceBooleanConstantWithConstantBinary::
     TransformationReplaceBooleanConstantWithConstantBinary(
-        const spvtools::fuzz::protobufs::
-            TransformationReplaceBooleanConstantWithConstantBinary& message)
-    : message_(message) {}
+        protobufs::TransformationReplaceBooleanConstantWithConstantBinary
+            message)
+    : message_(std::move(message)) {}
 
 TransformationReplaceBooleanConstantWithConstantBinary::
     TransformationReplaceBooleanConstantWithConstantBinary(
@@ -316,6 +316,11 @@ TransformationReplaceBooleanConstantWithConstantBinary::ToMessage() const {
   protobufs::Transformation result;
   *result.mutable_replace_boolean_constant_with_constant_binary() = message_;
   return result;
+}
+
+std::unordered_set<uint32_t>
+TransformationReplaceBooleanConstantWithConstantBinary::GetFreshIds() const {
+  return {message_.fresh_id_for_binary_operation()};
 }
 
 }  // namespace fuzz

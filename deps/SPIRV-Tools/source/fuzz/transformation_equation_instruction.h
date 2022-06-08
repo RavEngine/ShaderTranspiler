@@ -28,7 +28,7 @@ namespace fuzz {
 class TransformationEquationInstruction : public Transformation {
  public:
   explicit TransformationEquationInstruction(
-      const protobufs::TransformationEquationInstruction& message);
+      protobufs::TransformationEquationInstruction message);
 
   TransformationEquationInstruction(
       uint32_t fresh_id, SpvOp opcode,
@@ -59,6 +59,8 @@ class TransformationEquationInstruction : public Transformation {
   // The fact manager is also updated to inform it of this equation fact.
   void Apply(opt::IRContext* ir_context,
              TransformationContext* transformation_context) const override;
+
+  std::unordered_set<uint32_t> GetFreshIds() const override;
 
   protobufs::Transformation ToMessage() const override;
 

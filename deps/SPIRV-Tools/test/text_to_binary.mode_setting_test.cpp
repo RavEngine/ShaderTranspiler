@@ -189,6 +189,7 @@ INSTANTIATE_TEST_SUITE_P(
                 {CASE(OutputTriangleStrip), {}},
                 {CASE(VecTypeHint), {96}},
                 {CASE(ContractionOff), {}},
+                {CASE(SubgroupUniformControlFlowKHR), {}},
             })));
 
 INSTANTIATE_TEST_SUITE_P(
@@ -289,7 +290,8 @@ using TextToBinaryCapability = spvtest::TextToBinaryTest;
 
 TEST_F(TextToBinaryCapability, BadMissingCapability) {
   EXPECT_THAT(CompileFailure("OpCapability"),
-              Eq("Expected operand, found end of stream."));
+              Eq("Expected operand for OpCapability instruction, but found the "
+                 "end of the stream."));
 }
 
 TEST_F(TextToBinaryCapability, BadInvalidCapability) {

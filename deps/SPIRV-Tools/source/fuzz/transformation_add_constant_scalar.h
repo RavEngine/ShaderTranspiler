@@ -28,11 +28,11 @@ namespace fuzz {
 class TransformationAddConstantScalar : public Transformation {
  public:
   explicit TransformationAddConstantScalar(
-      const protobufs::TransformationAddConstantScalar& message);
+      protobufs::TransformationAddConstantScalar message);
 
   TransformationAddConstantScalar(uint32_t fresh_id, uint32_t type_id,
                                   const std::vector<uint32_t>& words,
-                                  bool is_irrelevant = false);
+                                  bool is_irrelevant);
 
   // - |message_.fresh_id| must not be used by the module
   // - |message_.type_id| must be the id of a floating-point or integer type
@@ -46,6 +46,8 @@ class TransformationAddConstantScalar : public Transformation {
   // Creates an IdIsIrrelevant fact about |fresh_id| if |is_irrelevant| is true.
   void Apply(opt::IRContext* ir_context,
              TransformationContext* transformation_context) const override;
+
+  std::unordered_set<uint32_t> GetFreshIds() const override;
 
   protobufs::Transformation ToMessage() const override;
 

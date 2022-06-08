@@ -24,11 +24,10 @@ namespace fuzz {
 FuzzerPassCopyObjects::FuzzerPassCopyObjects(
     opt::IRContext* ir_context, TransformationContext* transformation_context,
     FuzzerContext* fuzzer_context,
-    protobufs::TransformationSequence* transformations)
+    protobufs::TransformationSequence* transformations,
+    bool ignore_inapplicable_transformations)
     : FuzzerPass(ir_context, transformation_context, fuzzer_context,
-                 transformations) {}
-
-FuzzerPassCopyObjects::~FuzzerPassCopyObjects() = default;
+                 transformations, ignore_inapplicable_transformations) {}
 
 void FuzzerPassCopyObjects::Apply() {
   ForEachInstructionWithInstructionDescriptor(
@@ -40,6 +39,12 @@ void FuzzerPassCopyObjects::Apply() {
                    instruction_descriptor.target_instruction_opcode() &&
                "The opcode of the instruction we might insert before must be "
                "the same as the opcode in the descriptor for the instruction");
+
+        if (GetTransformationContext()->GetFactManager()->BlockIsDead(
+                block->id())) {
+          // Don't create synonyms in dead blocks.
+          return;
+        }
 
         // Check whether it is legitimate to insert a copy before this
         // instruction.
@@ -54,13 +59,13 @@ void FuzzerPassCopyObjects::Apply() {
           return;
         }
 
-        std::vector<opt::Instruction*> relevant_instructions =
-            FindAvailableInstructions(
-                function, block, inst_it,
-                [this](opt::IRContext* ir_context, opt::Instruction* inst) {
-                  return fuzzerutil::CanMakeSynonymOf(
-                      ir_context, *GetTransformationContext(), inst);
-                });
+        const auto relevant_instructions = FindAvailableInstructions(
+            function, block, inst_it,
+            [this](opt::IRContext* ir_context, opt::Instruction* inst) {
+              return TransformationAddSynonym::IsInstructionValid(
+                  ir_context, *GetTransformationContext(), inst,
+                  protobufs::TransformationAddSynonym::COPY_OBJECT);
+            });
 
         // At this point, |relevant_instructions| contains all the instructions
         // we might think of copying.

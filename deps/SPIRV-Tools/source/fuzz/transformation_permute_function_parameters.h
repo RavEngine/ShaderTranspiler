@@ -26,7 +26,7 @@ namespace fuzz {
 class TransformationPermuteFunctionParameters : public Transformation {
  public:
   explicit TransformationPermuteFunctionParameters(
-      const protobufs::TransformationPermuteFunctionParameters& message);
+      protobufs::TransformationPermuteFunctionParameters message);
 
   TransformationPermuteFunctionParameters(
       uint32_t function_id, uint32_t function_type_fresh_id,
@@ -50,6 +50,8 @@ class TransformationPermuteFunctionParameters : public Transformation {
   // - Calls to the function are adjusted accordingly
   void Apply(opt::IRContext* ir_context,
              TransformationContext* transformation_context) const override;
+
+  std::unordered_set<uint32_t> GetFreshIds() const override;
 
   protobufs::Transformation ToMessage() const override;
 

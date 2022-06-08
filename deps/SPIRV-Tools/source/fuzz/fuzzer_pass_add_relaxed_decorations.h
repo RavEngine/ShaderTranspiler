@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef SPIRV_TOOLS_FUZZER_PASS_ADD_RELAXED_DECORATIONS_H
-#define SPIRV_TOOLS_FUZZER_PASS_ADD_RELAXED_DECORATIONS_H
+#ifndef SOURCE_FUZZ_FUZZER_PASS_ADD_RELAXED_DECORATIONS_H_
+#define SOURCE_FUZZ_FUZZER_PASS_ADD_RELAXED_DECORATIONS_H_
 
 #include "source/fuzz/fuzzer_pass.h"
 
@@ -26,9 +26,8 @@ class FuzzerPassAddRelaxedDecorations : public FuzzerPass {
   FuzzerPassAddRelaxedDecorations(
       opt::IRContext* ir_context, TransformationContext* transformation_context,
       FuzzerContext* fuzzer_context,
-      protobufs::TransformationSequence* transformations);
-
-  ~FuzzerPassAddRelaxedDecorations() override;
+      protobufs::TransformationSequence* transformations,
+      bool ignore_inapplicable_transformations);
 
   void Apply() override;
 };
@@ -36,4 +35,4 @@ class FuzzerPassAddRelaxedDecorations : public FuzzerPass {
 }  // namespace fuzz
 }  // namespace spvtools
 
-#endif  // SPIRV_TOOLS_FUZZER_PASS_ADD_RELAXED_DECORATIONS_H
+#endif  // SOURCE_FUZZ_FUZZER_PASS_ADD_RELAXED_DECORATIONS_H_

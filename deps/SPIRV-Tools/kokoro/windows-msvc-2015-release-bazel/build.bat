@@ -24,19 +24,19 @@ set PATH=C:\python36;%PATH%
 :: Get dependencies
 cd %SRC%
 git clone --depth=1 https://github.com/KhronosGroup/SPIRV-Headers external/spirv-headers
-git clone --depth=1 https://github.com/google/googletest          external/googletest
+git clone https://github.com/google/googletest          external/googletest
+cd external && cd googletest && git reset --hard 1fb1bb23bb8418dc73a5a9a82bbed31dc610fec7 && cd .. && cd ..
 git clone --depth=1 https://github.com/google/effcee              external/effcee
 git clone --depth=1 https://github.com/google/re2                 external/re2
 
 :: REM Install Bazel.
-wget -q https://github.com/bazelbuild/bazel/releases/download/0.29.1/bazel-0.29.1-windows-x86_64.zip
-unzip -q bazel-0.29.1-windows-x86_64.zip
+wget -q https://github.com/bazelbuild/bazel/releases/download/5.0.0/bazel-5.0.0-windows-x86_64.zip
+unzip -q bazel-5.0.0-windows-x86_64.zip
 
 :: Set up MSVC
 call "C:\Program Files (x86)\Microsoft Visual Studio 14.0\VC\vcvarsall.bat" x64
 set BAZEL_VS=C:\Program Files (x86)\Microsoft Visual Studio 14.0
 set BAZEL_VC=C:\Program Files (x86)\Microsoft Visual Studio 14.0\VC
-set BAZEL_SH=c:\tools\msys64\usr\bin\bash.exe
 set BAZEL_PYTHON=c:\tools\python2\python.exe
 
 :: #########################################

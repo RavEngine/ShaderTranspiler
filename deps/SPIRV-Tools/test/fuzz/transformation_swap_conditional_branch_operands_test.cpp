@@ -13,6 +13,9 @@
 // limitations under the License.
 
 #include "source/fuzz/transformation_swap_conditional_branch_operands.h"
+
+#include "gtest/gtest.h"
+#include "source/fuzz/fuzzer_util.h"
 #include "source/fuzz/instruction_descriptor.h"
 #include "test/fuzz/fuzz_test_util.h"
 
@@ -66,13 +69,11 @@ TEST(TransformationSwapConditionalBranchOperandsTest, BasicTest) {
   const auto env = SPV_ENV_UNIVERSAL_1_3;
   const auto consumer = nullptr;
   const auto context = BuildModule(env, consumer, shader, kFuzzAssembleOption);
-  ASSERT_TRUE(IsValid(env, context.get()));
-
-  FactManager fact_manager;
   spvtools::ValidatorOptions validator_options;
-  TransformationContext transformation_context(&fact_manager,
-                                               validator_options);
-
+  ASSERT_TRUE(fuzzerutil::IsValidAndWellFormed(context.get(), validator_options,
+                                               kConsoleMessageConsumer));
+  TransformationContext transformation_context(
+      MakeUnique<FactManager>(context.get()), validator_options);
   // Invalid instruction descriptor.
   ASSERT_FALSE(TransformationSwapConditionalBranchOperands(
                    MakeInstructionDescriptor(26, SpvOpPhi, 0), 26)
@@ -90,9 +91,31 @@ TEST(TransformationSwapConditionalBranchOperandsTest, BasicTest) {
 
   TransformationSwapConditionalBranchOperands transformation(
       MakeInstructionDescriptor(15, SpvOpBranchConditional, 0), 26);
+  ASSERT_EQ(nullptr, context->get_def_use_mgr()->GetDef(26));
+  ASSERT_EQ(nullptr, context->get_instr_block(26));
   ASSERT_TRUE(
       transformation.IsApplicable(context.get(), transformation_context));
-  transformation.Apply(context.get(), &transformation_context);
+  ApplyAndCheckFreshIds(transformation, context.get(), &transformation_context);
+  ASSERT_EQ(SpvOpLogicalNot, context->get_def_use_mgr()->GetDef(26)->opcode());
+  ASSERT_EQ(5, context->get_instr_block(26)->id());
+  ASSERT_EQ(1, context->get_def_use_mgr()->NumUses(26));
+
+  // Check that the def-use manager knows that the conditional branch operands
+  // have been swapped.
+  std::vector<std::pair<uint32_t, uint32_t>> phi_operand_to_new_operand_index =
+      {{16, 2}, {21, 1}};
+  for (std::pair<uint32_t, uint32_t>& entry :
+       phi_operand_to_new_operand_index) {
+    context->get_def_use_mgr()->WhileEachUse(
+        entry.first,
+        [&entry](opt::Instruction* inst, uint32_t operand_index) -> bool {
+          if (inst->opcode() == SpvOpBranchConditional) {
+            EXPECT_EQ(entry.second, operand_index);
+            return false;
+          }
+          return true;
+        });
+  }
 
   std::string after_transformation = R"(
                OpCapability Shader

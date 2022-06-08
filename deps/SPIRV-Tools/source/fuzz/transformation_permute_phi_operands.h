@@ -26,7 +26,7 @@ namespace fuzz {
 class TransformationPermutePhiOperands : public Transformation {
  public:
   explicit TransformationPermutePhiOperands(
-      const protobufs::TransformationPermutePhiOperands& message);
+      protobufs::TransformationPermutePhiOperands message);
 
   TransformationPermutePhiOperands(uint32_t result_id,
                                    const std::vector<uint32_t>& permutation);
@@ -43,6 +43,8 @@ class TransformationPermutePhiOperands : public Transformation {
   // the elements in |permutation|.
   void Apply(opt::IRContext* ir_context,
              TransformationContext* transformation_context) const override;
+
+  std::unordered_set<uint32_t> GetFreshIds() const override;
 
   protobufs::Transformation ToMessage() const override;
 

@@ -191,14 +191,13 @@ bool Loop::GetInductionInitValue(const Instruction* induction,
   if (!constant) return false;
 
   if (value) {
-    const analysis::Integer* type =
-        constant->AsIntConstant()->type()->AsInteger();
-
-    if (type->IsSigned()) {
-      *value = constant->AsIntConstant()->GetS32BitValue();
-    } else {
-      *value = constant->AsIntConstant()->GetU32BitValue();
+    const analysis::Integer* type = constant->type()->AsInteger();
+    if (!type) {
+      return false;
     }
+
+    *value = type->IsSigned() ? constant->GetSignExtendedValue()
+                              : constant->GetZeroExtendedValue();
   }
 
   return true;
@@ -511,7 +510,7 @@ void Loop::ComputeLoopStructuredOrder(
 }
 
 LoopDescriptor::LoopDescriptor(IRContext* context, const Function* f)
-    : loops_(), dummy_top_loop_(nullptr) {
+    : loops_(), placeholder_top_loop_(nullptr) {
   PopulateList(context, f);
 }
 
@@ -592,7 +591,7 @@ void LoopDescriptor::PopulateList(IRContext* context, const Function* f) {
     }
   }
   for (Loop* loop : loops_) {
-    if (!loop->HasParent()) dummy_top_loop_.nested_loops_.push_back(loop);
+    if (!loop->HasParent()) placeholder_top_loop_.nested_loops_.push_back(loop);
   }
 }
 
@@ -682,22 +681,19 @@ bool Loop::FindNumberOfIterations(const Instruction* induction,
   if (!upper_bound) return false;
 
   // Must be integer because of the opcode on the condition.
-  int64_t condition_value = 0;
+  const analysis::Integer* type = upper_bound->type()->AsInteger();
 
-  const analysis::Integer* type =
-      upper_bound->AsIntConstant()->type()->AsInteger();
-
-  if (type->width() > 32) {
+  if (!type || type->width() > 64) {
     return false;
   }
 
-  if (type->IsSigned()) {
-    condition_value = upper_bound->AsIntConstant()->GetS32BitValue();
-  } else {
-    condition_value = upper_bound->AsIntConstant()->GetU32BitValue();
-  }
+  int64_t condition_value = type->IsSigned()
+                                ? upper_bound->GetSignExtendedValue()
+                                : upper_bound->GetZeroExtendedValue();
 
   // Find the instruction which is stepping through the loop.
+  //
+  // GetInductionStepOperation returns nullptr if |step_inst| is OpConstantNull.
   Instruction* step_inst = GetInductionStepOperation(induction);
   if (!step_inst) return false;
 
@@ -723,7 +719,7 @@ bool Loop::FindNumberOfIterations(const Instruction* induction,
     step_value = -step_value;
   }
 
-  // Find the inital value of the loop and make sure it is a constant integer.
+  // Find the initial value of the loop and make sure it is a constant integer.
   int64_t init_value = 0;
   if (!GetInductionInitValue(induction, &init_value)) return false;
 
@@ -755,9 +751,13 @@ bool Loop::FindNumberOfIterations(const Instruction* induction,
 // We retrieve the number of iterations using the following formula, diff /
 // |step_value| where diff is calculated differently according to the
 // |condition| and uses the |condition_value| and |init_value|. If diff /
-// |step_value| is NOT cleanly divisable then we add one to the sum.
+// |step_value| is NOT cleanly divisible then we add one to the sum.
 int64_t Loop::GetIterations(SpvOp condition, int64_t condition_value,
                             int64_t init_value, int64_t step_value) const {
+  if (step_value == 0) {
+    return 0;
+  }
+
   int64_t diff = 0;
 
   switch (condition) {
@@ -799,7 +799,7 @@ int64_t Loop::GetIterations(SpvOp condition, int64_t condition_value,
       // If the condition is not met to begin with the loop will never iterate.
       if (!(init_value >= condition_value)) return 0;
 
-      // We subract one to make it the same as SpvOpGreaterThan as it is
+      // We subtract one to make it the same as SpvOpGreaterThan as it is
       // functionally equivalent.
       diff = init_value - (condition_value - 1);
 
@@ -986,7 +986,7 @@ void LoopDescriptor::ClearLoops() {
 // Adds a new loop nest to the descriptor set.
 Loop* LoopDescriptor::AddLoopNest(std::unique_ptr<Loop> new_loop) {
   Loop* loop = new_loop.release();
-  if (!loop->HasParent()) dummy_top_loop_.nested_loops_.push_back(loop);
+  if (!loop->HasParent()) placeholder_top_loop_.nested_loops_.push_back(loop);
   // Iterate from inner to outer most loop, adding basic block to loop mapping
   // as we go.
   for (Loop& current_loop :
@@ -1000,7 +1000,7 @@ Loop* LoopDescriptor::AddLoopNest(std::unique_ptr<Loop> new_loop) {
 }
 
 void LoopDescriptor::RemoveLoop(Loop* loop) {
-  Loop* parent = loop->GetParent() ? loop->GetParent() : &dummy_top_loop_;
+  Loop* parent = loop->GetParent() ? loop->GetParent() : &placeholder_top_loop_;
   parent->nested_loops_.erase(std::find(parent->nested_loops_.begin(),
                                         parent->nested_loops_.end(), loop));
   std::for_each(

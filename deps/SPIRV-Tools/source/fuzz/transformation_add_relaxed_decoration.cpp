@@ -20,9 +20,8 @@ namespace spvtools {
 namespace fuzz {
 
 TransformationAddRelaxedDecoration::TransformationAddRelaxedDecoration(
-    const spvtools::fuzz::protobufs::TransformationAddRelaxedDecoration&
-        message)
-    : message_(message) {}
+    protobufs::TransformationAddRelaxedDecoration message)
+    : message_(std::move(message)) {}
 
 TransformationAddRelaxedDecoration::TransformationAddRelaxedDecoration(
     uint32_t result_id) {
@@ -140,6 +139,11 @@ bool TransformationAddRelaxedDecoration::IsNumeric(uint32_t opcode) {
     default:
       return false;
   }
+}
+
+std::unordered_set<uint32_t> TransformationAddRelaxedDecoration::GetFreshIds()
+    const {
+  return std::unordered_set<uint32_t>();
 }
 
 }  // namespace fuzz
