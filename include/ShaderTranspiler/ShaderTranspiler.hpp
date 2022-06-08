@@ -25,7 +25,6 @@ enum class TargetAPI{
 struct CompileTask{
 	const std::filesystem::path& filename;
 	const ShaderStage stage;
-	CompileTask(const std::filesystem::path& p, ShaderStage s): filename(p), stage(s){}
 };
 
 struct CompileResult{

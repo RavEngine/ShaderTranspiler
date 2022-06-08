@@ -1319,7 +1319,7 @@ void CompilerMSL::extract_global_variables_from_function(uint32_t func_id, std::
 	function_global_vars[func_id] = added_arg_ids;
 
 	// Add the global variables as arguments to the function
-	if (func_id != ir.default_entry_point)
+	if (decltype(ir.default_entry_point)(func_id) != ir.default_entry_point)
 	{
 		bool added_in = false;
 		bool added_out = false;

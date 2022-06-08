@@ -3221,7 +3221,7 @@ void Compiler::analyze_variable_scope(SPIRFunction &entry, AnalyzeVariableScopeA
 		else
 		{
 			uint32_t loop_dominator = cfg.find_loop_dominator(block_id);
-			if (loop_dominator != block_id)
+			if (decltype(block_id)(loop_dominator) != block_id)
 				block.loop_dominator = loop_dominator;
 			else
 				block.loop_dominator = SPIRBlock::NoDominator;
@@ -3475,7 +3475,7 @@ void Compiler::analyze_variable_scope(SPIRFunction &entry, AnalyzeVariableScopeA
 			}
 
 			auto &pred = cfg.get_preceding_edges(succ.front());
-			if (pred.size() != 1 || pred.front() != dominator)
+			if (pred.size() != 1 || decltype(dominator)(pred.front()) != dominator)
 			{
 				static_loop_init = false;
 				break;
@@ -3909,7 +3909,7 @@ void Compiler::build_function_control_flow_graphs_and_analyze()
 			for (auto loop_variable : b.loop_variables)
 			{
 				if (flags != get_decoration_bitset(loop_variable) ||
-				    type != get<SPIRVariable>(b.loop_variables.front()).basetype)
+				    spirv_cross::TypeID(type) != get<SPIRVariable>(b.loop_variables.front()).basetype)
 				{
 					invalid_initializers = true;
 					break;
@@ -4646,8 +4646,7 @@ void Compiler::analyze_interlocked_resource_usage()
 		traverse_all_reachable_opcodes(get<SPIRFunction>(ir.default_entry_point), handler);
 
 		// For GLSL. If we hit any of these cases, we have to fall back to conservative approach.
-		interlocked_is_complex =
-		    !handler.use_critical_section || handler.interlock_function_id != ir.default_entry_point;
+		interlocked_is_complex = !handler.use_critical_section || decltype(ir.default_entry_point)(handler.interlock_function_id) != ir.default_entry_point;
 	}
 }
 

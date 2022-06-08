@@ -306,7 +306,7 @@ void CompilerReflection::emit_types()
 		{
 			if (!naturally_emit_type(this->get<SPIRType>(type.parent_type)) &&
 			    find(physical_pointee_types.begin(), physical_pointee_types.end(),
-			         type.parent_type) == physical_pointee_types.end())
+			         uint32_t(type.parent_type)) == physical_pointee_types.end())
 			{
 				physical_pointee_types.push_back(type.parent_type);
 			}

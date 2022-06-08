@@ -2,7 +2,6 @@
 #include <ShaderTranspiler/ShaderTranspiler.hpp>
 #include <iostream>
 
-using namespace std::filesystem;
 using namespace std;
 
 //the library's namespace
@@ -15,7 +14,7 @@ int main(){
 	
 	//Create a CompileTask with the path to your shader and its stage.
 	//The path is required because this library supports the OpenGL #include extension
-	CompileTask task(path("test.fsh"),ShaderStage::Fragment);
+	CompileTask task{ std::filesystem::path("test.fsh"),ShaderStage::Fragment };
 	
 	//configure the compile with an Options object
 	Options opt;

@@ -10407,8 +10407,8 @@ void CompilerGLSL::emit_instruction(const Instruction &instruction)
 			if (type.image.ms)
 				SPIRV_CROSS_THROW("Trying to remap multisampled image to variable, this is not possible.");
 
-			auto itr =
-			    find_if(begin(pls_inputs), end(pls_inputs), [var](const PlsRemap &pls) { return pls.id == var->self; });
+			auto itr = find_if(begin(pls_inputs), end(pls_inputs),
+			                   [var](const PlsRemap &pls) { return decltype(var->self)(pls.id) == var->self; });
 
 			if (itr == end(pls_inputs))
 			{
@@ -12810,7 +12810,7 @@ bool CompilerGLSL::for_loop_initializers_are_same_type(const SPIRBlock &block)
 			expected = get<SPIRVariable>(var).basetype;
 			expected_flags = get_decoration_bitset(var);
 		}
-		else if (expected != get<SPIRVariable>(var).basetype)
+		else if (spirv_cross::TypeID(expected) != get<SPIRVariable>(var).basetype)
 			return false;
 
 		// Precision flags and things like that must also match.
@@ -13931,7 +13931,7 @@ void CompilerGLSL::fixup_type_alias()
 		{
 			// Become the master.
 			ir.for_each_typed_id<SPIRType>([&](uint32_t other_id, SPIRType &other_type) {
-				if (other_id == type.self)
+				if (decltype(type.self)(other_id) == type.self)
 					return;
 
 				if (other_type.type_alias == type.type_alias)
