@@ -4,10 +4,6 @@ set(CMAKE_XCODE_GENERATE_SCHEME OFF CACHE INTERNAL "")
 option(ST_ENABLE_TEST "Enable tests" ON)
 PROJECT(ShaderTranspiler)
 
-if(MSVC)
-add_definitions("/std:c++latest")
-endif()
-
 SET(ST_DEPS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/deps")
 
 # dependencies
@@ -34,7 +30,7 @@ file(GLOB HEADERS "include/ShaderTranspiler/*.hpp")
 file(GLOB CHEADERS "include/ShaderTranspiler/*.h")
 
 add_library("${PROJECT_NAME}" ${SOURCES} ${CHEADERS} ${HEADERS})
-target_compile_features("${PROJECT_NAME}" PRIVATE cxx_std_17)
+target_compile_features("${PROJECT_NAME}" PRIVATE cxx_std_20)
 set_target_properties("${PROJECT_NAME}" PROPERTIES XCODE_GENERATE_SCHEME ON)
 
 target_include_directories("${PROJECT_NAME}" PRIVATE 
@@ -61,4 +57,5 @@ if (ST_ENABLE_TEST)
     target_link_libraries("${PROJECT_NAME}_test" "${PROJECT_NAME}")
     set_target_properties("${PROJECT_NAME}_test" PROPERTIES XCODE_GENERATE_SCHEME ON)
     target_compile_features("${PROJECT_NAME}_test" PRIVATE cxx_std_17)
+    set_property(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY VS_STARTUP_PROJECT "${PROJECT_NAME}_test")
 endif()

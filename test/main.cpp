@@ -14,7 +14,13 @@ int main(){
 	
 	//Create a CompileTask with the path to your shader and its stage.
 	//The path is required because this library supports the OpenGL #include extension
-	CompileTask task{ std::filesystem::path("test.fsh"),ShaderStage::Fragment };
+	MemoryCompileTask task{ R"(#version 430
+			layout(early_fragment_tests) in;
+			layout(location = 0) out vec4 color;
+			void main(){
+				color = vec4(1,0,0,1);
+			}
+		)",ShaderStage::Fragment};
 	
 	//configure the compile with an Options object
 	Options opt;

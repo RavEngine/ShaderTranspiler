@@ -21,9 +21,17 @@ enum class TargetAPI{
 	Metal,
 };
 
-struct CompileTask{
+
+struct FileCompileTask{
 	const std::filesystem::path& filename;
 	const ShaderStage stage;
+	const std::vector<std::filesystem::path> includePaths;	// optional
+};
+
+struct MemoryCompileTask {
+	const std::string source;
+	const ShaderStage stage;
+	const std::vector<std::filesystem::path> includePaths;	// optional
 };
 
 struct CompileResult{
@@ -40,11 +48,19 @@ struct Options{
 class ShaderTranspiler{
 public:
     /**
-    Execute the shader transpiler.
+    Execute the shader transpiler using shader source code in a file.
      @param task the CompileTask to execute. See CompileTask for information.
      @param platform the target API to compile to.
      @return A CompileResult representing the result of the compile.
      */
-	CompileResult CompileTo(const CompileTask& task, const TargetAPI platform, const Options& options);
+	CompileResult CompileTo(const FileCompileTask& task, const TargetAPI platform, const Options& options);
+
+	/**
+	Execute the shader transpiler using shader source code in memory.
+	 @param task the CompileTask to execute. See CompileTask for information.
+	 @param platform the target API to compile to.
+	 @return A CompileResult representing the result of the compile.
+	 */
+	CompileResult CompileTo(const MemoryCompileTask& task, const TargetAPI platform, const Options& options);
 };
 }

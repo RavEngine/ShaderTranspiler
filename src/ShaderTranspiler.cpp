@@ -121,98 +121,109 @@ TBuiltInResource CreateDefaultTBuiltInResource(){
 	};
 }
 
-/**
- Compile GLSL to SPIR-V bytes
- @param filename the file to compile
- @param ShaderType the type of shader to compile
- */
-const spirvbytes CompileGLSL(const std::filesystem::path& filename, const EShLanguage ShaderType){
+const spirvbytes CompileGLSL(const std::string_view& source, const EShLanguage ShaderType, const std::vector<std::filesystem::path>& includePaths) {
 	//initialize. Do only once per process!
 	if (!glslAngInitialized)
 	{
 		glslang::InitializeProcess();
 		glslAngInitialized = true;
 	}
-	
-	//Load GLSL into a string
-	std::ifstream file(filename);
-	
-	if (!file.is_open())
-	{
-		throw std::runtime_error("failed to open file: " + filename.string());
-	}
-		
-	//read input file into string, convert to C string
-	std::string InputGLSL((std::istreambuf_iterator<char>(file)),std::istreambuf_iterator<char>());
-	const char* InputCString = InputGLSL.c_str();
-	
+
+	const char* InputCString = source.data();
+
 	//determine the stage
 	glslang::TShader Shader(ShaderType);
-	
+
 	//set the associated strings (in this case one, but shader meta JSON can describe more. Pass as a C array and a size.
 	Shader.setStrings(&InputCString, 1);
-	
+
 	//=========== vulkan versioning (should alow this to be passed in, or find out from the system) ========
 	const int DefaultVersion = 130;
-	
+
 	int ClientInputSemanticsVersion = DefaultVersion; // maps to, say, #define VULKAN 100
 	glslang::EShTargetClientVersion VulkanClientVersion = glslang::EShTargetVulkan_1_2;
 	glslang::EShTargetLanguageVersion TargetVersion = glslang::EShTargetSpv_1_5;
-	
+
 	Shader.setEnvInput(glslang::EShSourceGlsl, ShaderType, glslang::EShClientVulkan, ClientInputSemanticsVersion);
 	Shader.setEnvClient(glslang::EShClientVulkan, VulkanClientVersion);
 	Shader.setEnvTarget(glslang::EShTargetSpv, TargetVersion);
-	
-    auto DefaultTBuiltInResource = CreateDefaultTBuiltInResource();
-    
+
+	auto DefaultTBuiltInResource = CreateDefaultTBuiltInResource();
+
 	TBuiltInResource Resources(DefaultTBuiltInResource);
-	EShMessages messages = (EShMessages) (EShMsgSpvRules | EShMsgVulkanRules);
-	
-	
-	
+	EShMessages messages = (EShMessages)(EShMsgSpvRules | EShMsgVulkanRules);
+
+
+
 	// =============================== preprocess GLSL =============================
 	DirStackFileIncluder Includer;
-	
+
 	//Get Path of File
-	std::string Path = filename.stem().string();
-	Includer.pushExternalLocalDirectory(Path);
-	
+	for (const auto& path : includePaths) {
+		Includer.pushExternalLocalDirectory(path.string());
+	}
+
 	std::string PreprocessedGLSL;
-	
+
 	if (!Shader.preprocess(&Resources, DefaultVersion, ENoProfile, false, false, messages, &PreprocessedGLSL, Includer))
 	{
-		string msg = "GLSL Preprocessing Failed for: " + filename.string() + "\n" + Shader.getInfoLog() + "\n" + Shader.getInfoDebugLog();
+		string msg = string("GLSL Preprocessing failed: ") + Shader.getInfoLog() + "\n" + Shader.getInfoDebugLog();
 		throw std::runtime_error(msg);
 	}
-	
+
 	// update the stored strings (is the original set necessary?)
 	const char* PreprocessedCStr = PreprocessedGLSL.c_str();
 	Shader.setStrings(&PreprocessedCStr, 1);
-	
+
 	// ================ now parse the shader ================
 	if (!Shader.parse(&Resources, DefaultVersion, false, messages))
 	{
-		string msg = "GLSL Parsing Failed for: " + filename.string() + "\n" + Shader.getInfoLog() + "\n" + Shader.getInfoDebugLog();
+		string msg = string("GLSL Parsing failed: ") + Shader.getInfoLog() + "\n" + Shader.getInfoDebugLog();
 		throw std::runtime_error(msg);
 	}
-	
+
 	// ============== pass parsed shader and link it ==============
 	glslang::TProgram Program;
 	Program.addShader(&Shader);
-	
-	if(!Program.link(messages))
+
+	if (!Program.link(messages))
 	{
-		std::string msg = "GLSL Linking Failed for: " + filename.string() + "\n" + Shader.getInfoLog() + "\n" + Shader.getInfoDebugLog();
+		std::string msg = string("GLSL Linking failed") + Shader.getInfoLog() + "\n" + Shader.getInfoDebugLog();
 		throw std::runtime_error(msg);
 	}
-	
+
 	// ========= convert to spir-v =============
 	std::vector<unsigned int> SpirV;
 	spv::SpvBuildLogger logger;
 	glslang::SpvOptions spvOptions;
 	glslang::GlslangToSpv(*Program.getIntermediate(ShaderType), SpirV, &logger, &spvOptions);
-	
+
 	return SpirV;
+}
+
+/**
+ Compile GLSL to SPIR-V bytes
+ @param filename the file to compile
+ @param ShaderType the type of shader to compile
+ */
+const spirvbytes CompileGLSLFromFile(const FileCompileTask& task, const EShLanguage ShaderType){
+	
+	
+	//Load GLSL into a string
+	std::ifstream file(task.filename);
+	
+	if (!file.is_open())
+	{
+		throw std::runtime_error("failed to open file: " + task.filename.string());
+	}
+		
+	//read input file into string, convert to C string
+	std::string InputGLSL((std::istreambuf_iterator<char>(file)),std::istreambuf_iterator<char>());
+	
+	// add current directory
+	std::vector<std::filesystem::path> pathsWithParent(std::move(task.includePaths));
+	pathsWithParent.push_back(task.filename.parent_path());
+	return CompileGLSL(InputGLSL, ShaderType, pathsWithParent);
 }
 
 /**
@@ -329,55 +340,75 @@ spirvbytes OptimizeSPIRV(const spirvbytes& bin, const Options &options){
 	}
 }
 
-CompileResult ShaderTranspiler::CompileTo(const CompileTask& task, TargetAPI api, const Options& opt){
+struct APIConversion {
 	EShLanguage type;
 	spv::ExecutionModel model;
+};
+static APIConversion ShaderStageToInternal(ShaderStage api) {
+	APIConversion cv;
 
-	switch(task.stage){
-		case ShaderStage::Vertex:
-			type = EShLangVertex;
-			model = decltype(model)::ExecutionModelVertex;
-			break;
-		case ShaderStage::Fragment:
-			type = EShLangFragment;
-			model = decltype(model)::ExecutionModelFragment;
-			break;
-		case ShaderStage::TessControl:
-			type = EShLangTessControl;
-			model = decltype(model)::ExecutionModelTessellationControl;
-			break;
-		case ShaderStage::TessEval:
-			type = EShLangTessEvaluation;
-			model = decltype(model)::ExecutionModelTessellationEvaluation;
-			break;
-		case ShaderStage::Geometry:
-			type = EShLangGeometry;
-			model = decltype(model)::ExecutionModelGeometry;
-			break;
-		case ShaderStage::Compute:
-			type = EShLangCompute;
-			model = decltype(model)::ExecutionModelGLCompute;
-			break;
+	switch (api) {
+	case ShaderStage::Vertex:
+		cv.type = EShLangVertex;
+		cv.model = decltype(cv.model)::ExecutionModelVertex;
+		break;
+	case ShaderStage::Fragment:
+		cv.type = EShLangFragment;
+		cv.model = decltype(cv.model)::ExecutionModelFragment;
+		break;
+	case ShaderStage::TessControl:
+		cv.type = EShLangTessControl;
+		cv.model = decltype(cv.model)::ExecutionModelTessellationControl;
+		break;
+	case ShaderStage::TessEval:
+		cv.type = EShLangTessEvaluation;
+		cv.model = decltype(cv.model)::ExecutionModelTessellationEvaluation;
+		break;
+	case ShaderStage::Geometry:
+		cv.type = EShLangGeometry;
+		cv.model = decltype(cv.model)::ExecutionModelGeometry;
+		break;
+	case ShaderStage::Compute:
+		cv.type = EShLangCompute;
+		cv.model = decltype(cv.model)::ExecutionModelGLCompute;
+		break;
 	}
-	
+
+	return cv;
+}
+
+static CompileResult CompileSpirVTo(const spirvbytes& spirv, TargetAPI api, const Options& opt,  APIConversion types) {
+	switch (api) {
+	case TargetAPI::OpenGL_ES:
+		return CompileResult{ SPIRVToESSL(spirv,opt,types.model),false };
+	case TargetAPI::OpenGL:
+		break;
+	case TargetAPI::Vulkan:
+		return SerializeSPIRV(OptimizeSPIRV(spirv, opt));
+		break;
+	case TargetAPI::DirectX11:
+		return CompileResult{ SPIRVToHLSL(spirv,opt,types.model),false };
+		break;
+	case TargetAPI::Metal:
+		return CompileResult{ SPIRVtoMSL(spirv,opt,types.model),false };
+		break;
+	default:
+		throw runtime_error("Unsupported API");
+		break;
+	}
+}
+
+CompileResult ShaderTranspiler::CompileTo(const FileCompileTask& task, TargetAPI api, const Options& opt) {
+
+	auto types = ShaderStageToInternal(task.stage);
+
 	//generate spirv
-	auto spirv = CompileGLSL(task.filename, type);
-	switch(api){
-		case TargetAPI::OpenGL_ES:
-			return CompileResult{SPIRVToESSL(spirv,opt,model),false};
-		case TargetAPI::OpenGL:
-			break;
-		case TargetAPI::Vulkan:
-			return SerializeSPIRV(OptimizeSPIRV(spirv, opt));
-			break;
-		case TargetAPI::DirectX11:
-			return CompileResult{SPIRVToHLSL(spirv,opt,model),false};
-			break;
-		case TargetAPI::Metal:
-			return CompileResult{SPIRVtoMSL(spirv,opt,model),false};
-			break;
-		default:
-			throw runtime_error("Unsupported API");
-			break;
-	}
+	auto spirv = CompileGLSLFromFile(task, types.type);
+	return CompileSpirVTo(spirv, api, opt, types);
+}
+
+CompileResult ShaderTranspiler::CompileTo(const MemoryCompileTask& task, TargetAPI api, const Options& opt) {
+	auto types = ShaderStageToInternal(task.stage);
+	auto spirv = CompileGLSL(task.source, types.type, task.includePaths);
+	return CompileSpirVTo(spirv, api, opt, types);
 }
