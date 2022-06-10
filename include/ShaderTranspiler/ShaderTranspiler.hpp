@@ -2,7 +2,6 @@
 #include <string>
 #include <vector>
 #include <filesystem>
-#include <Public/ShaderLang.h>
 
 namespace shadert{
 enum class ShaderStage{
@@ -33,62 +32,12 @@ struct CompileResult{
 };
 
 struct Options{
-	bool mobile;
 	uint32_t version;
+	bool mobile;
+	std::string entryPoint = "frag";
 };
 
 class ShaderTranspiler{
-protected:
-	typedef std::vector<uint32_t> spirvbytes;
-	static bool glslAngInitialized;
-    
-    /**
-     * Factory
-     * @return instance of DefaultTBuiltInResource struct with appropriate fields set
-     */
-    static TBuiltInResource CreateDefaultTBuiltInResource();
-	
-	/**
-	 Compile GLSL to SPIR-V bytes
-	 @param filename the file to compile
-	 @param ShaderType the type of shader to compile
-	 */
-	const std::vector<uint32_t> CompileGLSL(const std::filesystem::path& filename, const EShLanguage ShaderType);
-	
-    /**
-     Decompile SPIR-V to OpenGL ES shader
-     @param bin the SPIR-V binary to decompile
-     @return OpenGL-ES source code
-     */
-	std::string SPIRVToESSL(const spirvbytes& bin, const Options& options);
-    
-    /**
-     Decompile SPIR-V to DirectX shader
-     @param bin the SPIR-V binary to decompile
-     @return HLSL source code
-     */
-	std::string SPIRVToHLSL(const spirvbytes& bin, const Options& options);
-    
-    /**
-     Decompile SPIR-V to Metal shader
-     @param bin the SPIR-V binary to decompile
-     @param mobile set to True to compile for Apple Mobile platforms
-     @return Metal shader source code
-     */
-	std::string SPIRVtoMSL(const spirvbytes& bin, const Options& options);
-	
-	/**
-	 Perform standard optimizations on a SPIR-V binary
-	 @param bin the SPIR-V binary to optimize
-	 @param options settings for the optimizer
-	 */
-	spirvbytes OptimizeSPIRV(const spirvbytes& bin, const Options& options);
-	
-	/**
-	 Serialize a SPIR-V binary
-	 @param bin the binary
-	 */
-	CompileResult SerializeSPIRV(const spirvbytes& bin);
 public:
     /**
     Execute the shader transpiler.

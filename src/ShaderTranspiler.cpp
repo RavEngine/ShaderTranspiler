@@ -13,10 +13,16 @@ using namespace std;
 using namespace std::filesystem;
 using namespace shadert;
 
-bool ShaderTranspiler::glslAngInitialized = false;
+static bool glslAngInitialized = false;
 
-//see https://github.com/ForestCSharp/VkCppRenderer/blob/master/Src/Renderer/GLSL/ShaderCompiler.hpp for more info
-TBuiltInResource ShaderTranspiler::CreateDefaultTBuiltInResource(){
+typedef std::vector<uint32_t> spirvbytes;
+
+/**
+ * Factory
+ * see https://github.com/ForestCSharp/VkCppRenderer/blob/master/Src/Renderer/GLSL/ShaderCompiler.hpp for more info
+ * @return instance of DefaultTBuiltInResource struct with appropriate fields set
+ */
+TBuiltInResource CreateDefaultTBuiltInResource(){
     return TBuiltInResource{
 		.maxLights = 32,
 		.maxClipPlanes = 6,
@@ -115,7 +121,12 @@ TBuiltInResource ShaderTranspiler::CreateDefaultTBuiltInResource(){
 	};
 }
 
-const vector<uint32_t> ShaderTranspiler::CompileGLSL(const std::filesystem::path& filename, const EShLanguage ShaderType){
+/**
+ Compile GLSL to SPIR-V bytes
+ @param filename the file to compile
+ @param ShaderType the type of shader to compile
+ */
+const spirvbytes CompileGLSL(const std::filesystem::path& filename, const EShLanguage ShaderType){
 	//initialize. Do only once per process!
 	if (!glslAngInitialized)
 	{
@@ -204,28 +215,42 @@ const vector<uint32_t> ShaderTranspiler::CompileGLSL(const std::filesystem::path
 	return SpirV;
 }
 
-std::string ShaderTranspiler::SPIRVToESSL(const spirvbytes& bin, const Options& opt){
+/**
+ Decompile SPIR-V to OpenGL ES shader
+ @param bin the SPIR-V binary to decompile
+ @return OpenGL-ES source code
+ */
+std::string SPIRVToESSL(const spirvbytes& bin, const Options& opt, spv::ExecutionModel model){
 	spirv_cross::CompilerGLSL glsl(std::move(bin));
 		
 	//set options
 	spirv_cross::CompilerGLSL::Options options;
 	options.version = opt.version;
 	options.es = opt.mobile;
-	glsl.set_common_options(options);
-	
+	glsl.set_common_options(options);	
 	return glsl.compile();
 }
 
-std::string ShaderTranspiler::SPIRVToHLSL(const spirvbytes& bin, const Options& opt){
+/**
+ Decompile SPIR-V to DirectX shader
+ @param bin the SPIR-V binary to decompile
+ @return HLSL source code
+ */
+std::string SPIRVToHLSL(const spirvbytes& bin, const Options& opt, spv::ExecutionModel model){
 	spirv_cross::CompilerHLSL hlsl(std::move(bin));
 	
 	spirv_cross::CompilerHLSL::Options options;
 	hlsl.set_hlsl_options(options);
-	
 	return hlsl.compile();
 }
 
-std::string ShaderTranspiler::SPIRVtoMSL(const spirvbytes& bin, const Options& opt){
+/**
+ Decompile SPIR-V to Metal shader
+ @param bin the SPIR-V binary to decompile
+ @param mobile set to True to compile for Apple Mobile platforms
+ @return Metal shader source code
+ */
+std::string SPIRVtoMSL(const spirvbytes& bin, const Options& opt, spv::ExecutionModel model){
 	spirv_cross::CompilerMSL msl(std::move(bin));
 	
 	spirv_cross::CompilerMSL::Options options;
@@ -237,13 +262,22 @@ std::string ShaderTranspiler::SPIRVtoMSL(const spirvbytes& bin, const Options& o
 	return msl.compile();
 }
 
-CompileResult ShaderTranspiler::SerializeSPIRV(const spirvbytes& bin){
+/**
+ Serialize a SPIR-V binary
+ @param bin the binary
+ */
+CompileResult SerializeSPIRV(const spirvbytes& bin){
 	ostringstream buffer(ios::binary);
 	buffer.write((char*)&bin[0], bin.size() * sizeof(uint32_t));
 	return {buffer.str(),true};
 }
 
-ShaderTranspiler::spirvbytes ShaderTranspiler::OptimizeSPIRV(const spirvbytes& bin, const Options &options){
+/**
+ Perform standard optimizations on a SPIR-V binary
+ @param bin the SPIR-V binary to optimize
+ @param options settings for the optimizer
+ */
+spirvbytes OptimizeSPIRV(const spirvbytes& bin, const Options &options){
 	
 	spv_target_env target;
 	switch(options.version){
@@ -287,7 +321,7 @@ ShaderTranspiler::spirvbytes ShaderTranspiler::OptimizeSPIRV(const spirvbytes& b
 	optimizer.SetMessageConsumer(consumer);
 	
 	spirvbytes newbin;
-	if (optimizer.Run(&bin[0], bin.size(), &newbin)){
+	if (optimizer.Run(bin.data(), bin.size(), &newbin)){
 		return newbin;
 	}
 	else{
@@ -295,26 +329,34 @@ ShaderTranspiler::spirvbytes ShaderTranspiler::OptimizeSPIRV(const spirvbytes& b
 	}
 }
 
-CompileResult ShaderTranspiler::CompileTo(const CompileTask& task, TargetAPI api,  const Options& opt){
+CompileResult ShaderTranspiler::CompileTo(const CompileTask& task, TargetAPI api, const Options& opt){
 	EShLanguage type;
+	spv::ExecutionModel model;
+
 	switch(task.stage){
 		case ShaderStage::Vertex:
 			type = EShLangVertex;
+			model = decltype(model)::ExecutionModelVertex;
 			break;
 		case ShaderStage::Fragment:
 			type = EShLangFragment;
+			model = decltype(model)::ExecutionModelFragment;
 			break;
 		case ShaderStage::TessControl:
 			type = EShLangTessControl;
+			model = decltype(model)::ExecutionModelTessellationControl;
 			break;
 		case ShaderStage::TessEval:
 			type = EShLangTessEvaluation;
+			model = decltype(model)::ExecutionModelTessellationEvaluation;
 			break;
 		case ShaderStage::Geometry:
 			type = EShLangGeometry;
+			model = decltype(model)::ExecutionModelGeometry;
 			break;
 		case ShaderStage::Compute:
 			type = EShLangCompute;
+			model = decltype(model)::ExecutionModelGLCompute;
 			break;
 	}
 	
@@ -322,17 +364,17 @@ CompileResult ShaderTranspiler::CompileTo(const CompileTask& task, TargetAPI api
 	auto spirv = CompileGLSL(task.filename, type);
 	switch(api){
 		case TargetAPI::OpenGL_ES:
-			return CompileResult{SPIRVToESSL(spirv,opt),false};
+			return CompileResult{SPIRVToESSL(spirv,opt,model),false};
 		case TargetAPI::OpenGL:
 			break;
 		case TargetAPI::Vulkan:
 			return SerializeSPIRV(OptimizeSPIRV(spirv, opt));
 			break;
 		case TargetAPI::DirectX11:
-			return CompileResult{SPIRVToHLSL(spirv,opt),false};
+			return CompileResult{SPIRVToHLSL(spirv,opt,model),false};
 			break;
 		case TargetAPI::Metal:
-			return CompileResult{SPIRVtoMSL(spirv,opt),false};
+			return CompileResult{SPIRVtoMSL(spirv,opt,model),false};
 			break;
 		default:
 			throw runtime_error("Unsupported API");
