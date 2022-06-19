@@ -6,6 +6,7 @@
 #include <spirv_hlsl.hpp>
 #include <spirv_msl.hpp>
 #include <spirv-tools/optimizer.hpp>
+#include <spirv_reflect.hpp>
 #include <iostream>
 #include <sstream>
 
@@ -16,6 +17,31 @@ using namespace shadert;
 static bool glslAngInitialized = false;
 
 typedef std::vector<uint32_t> spirvbytes;
+
+ReflectData::Resource::Resource(const spirv_cross::Resource& other) : id(other.id), type_id(other.type_id), base_type_id(other.base_type_id), name(std::move(other.name)){}
+
+static ReflectData getReflectData(const spirv_cross::Compiler& comp){
+	auto rsc = comp.get_shader_resources();
+	
+	
+	ReflectData refl{
+		.uniform_buffers{rsc.uniform_buffers.data(),rsc.uniform_buffers.begin() + rsc.uniform_buffers.size()},
+		.storage_buffers{rsc.storage_buffers.data(),rsc.storage_buffers.begin() + rsc.storage_buffers.size()},
+		.stage_inputs{rsc.stage_inputs.data(),rsc.stage_inputs.begin() + rsc.stage_inputs.size()},
+		.stage_outputs{rsc.stage_outputs.data(),rsc.stage_outputs.begin() + rsc.stage_outputs.size()},
+		.subpass_inputs{rsc.subpass_inputs.data(),rsc.subpass_inputs.begin() + rsc.subpass_inputs.size()},
+		.storage_images{rsc.storage_images.data(),rsc.storage_images.begin() + rsc.storage_images.size()},
+		.sampled_images{rsc.sampled_images.data(),rsc.sampled_images.begin() + rsc.sampled_images.size()},
+		.atomic_counters{rsc.atomic_counters.data(),rsc.atomic_counters.begin() + rsc.atomic_counters.size()},
+		.acceleration_structures{rsc.acceleration_structures.data(),rsc.acceleration_structures.begin() + rsc.acceleration_structures.size()},
+		.push_constant_buffers{rsc.push_constant_buffers.data(),rsc.push_constant_buffers.begin() + rsc.push_constant_buffers.size()},
+		.separate_images{rsc.separate_images.data(),rsc.separate_images.begin() + rsc.separate_images.size()},
+		.separate_samplers{rsc.separate_samplers.data(),rsc.separate_samplers.begin() + rsc.separate_samplers.size()},
+	};
+	
+	
+	return refl;
+}
 
 /**
  * Factory
@@ -231,15 +257,15 @@ const spirvbytes CompileGLSLFromFile(const FileCompileTask& task, const EShLangu
  @param bin the SPIR-V binary to decompile
  @return OpenGL-ES source code
  */
-std::string SPIRVToESSL(const spirvbytes& bin, const Options& opt, spv::ExecutionModel model){
+IMResult SPIRVToESSL(const spirvbytes& bin, const Options& opt, spv::ExecutionModel model){
 	spirv_cross::CompilerGLSL glsl(std::move(bin));
 		
 	//set options
 	spirv_cross::CompilerGLSL::Options options;
 	options.version = opt.version;
 	options.es = opt.mobile;
-	glsl.set_common_options(options);	
-	return glsl.compile();
+	glsl.set_common_options(options);
+	return {glsl.compile(), getReflectData(glsl)};
 }
 
 /**
@@ -247,12 +273,12 @@ std::string SPIRVToESSL(const spirvbytes& bin, const Options& opt, spv::Executio
  @param bin the SPIR-V binary to decompile
  @return HLSL source code
  */
-std::string SPIRVToHLSL(const spirvbytes& bin, const Options& opt, spv::ExecutionModel model){
+IMResult SPIRVToHLSL(const spirvbytes& bin, const Options& opt, spv::ExecutionModel model){
 	spirv_cross::CompilerHLSL hlsl(std::move(bin));
 	
 	spirv_cross::CompilerHLSL::Options options;
 	hlsl.set_hlsl_options(options);
-	return hlsl.compile();
+	return {hlsl.compile(), getReflectData(hlsl)};
 }
 
 /**
@@ -261,7 +287,7 @@ std::string SPIRVToHLSL(const spirvbytes& bin, const Options& opt, spv::Executio
  @param mobile set to True to compile for Apple Mobile platforms
  @return Metal shader source code
  */
-std::string SPIRVtoMSL(const spirvbytes& bin, const Options& opt, spv::ExecutionModel model){
+IMResult SPIRVtoMSL(const spirvbytes& bin, const Options& opt, spv::ExecutionModel model){
 	spirv_cross::CompilerMSL msl(std::move(bin));
 	
 	spirv_cross::CompilerMSL::Options options;
@@ -270,7 +296,7 @@ std::string SPIRVtoMSL(const spirvbytes& bin, const Options& opt, spv::Execution
 	options.set_msl_version(major,minor);
 	options.platform = opt.mobile ? spirv_cross::CompilerMSL::Options::Platform::iOS : spirv_cross::CompilerMSL::Options::Platform::macOS;
 	msl.set_msl_options(options);
-	return msl.compile();
+	return {msl.compile(), getReflectData(msl)};
 }
 
 /**
@@ -280,7 +306,7 @@ std::string SPIRVtoMSL(const spirvbytes& bin, const Options& opt, spv::Execution
 CompileResult SerializeSPIRV(const spirvbytes& bin){
 	ostringstream buffer(ios::binary);
 	buffer.write((char*)&bin[0], bin.size() * sizeof(uint32_t));
-	return {buffer.str(),true};
+	return {{buffer.str()},true};
 }
 
 /**
@@ -386,7 +412,7 @@ static CompileResult CompileSpirVTo(const spirvbytes& spirv, TargetAPI api, cons
 	case TargetAPI::Vulkan:
 		return SerializeSPIRV(OptimizeSPIRV(spirv, opt));
 		break;
-	case TargetAPI::DirectX11:
+	case TargetAPI::DirectX:
 		return CompileResult{ SPIRVToHLSL(spirv,opt,types.model),false };
 		break;
 	case TargetAPI::Metal:

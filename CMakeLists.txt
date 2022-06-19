@@ -25,6 +25,12 @@ set(SPIRV_SKIP_TESTS ON CACHE INTERNAL "")
 set(SPIRV_WERROR OFF CACHE INTERNAL "")
 add_subdirectory("${ST_DEPS_DIR}/SPIRV-Tools" EXCLUDE_FROM_ALL)
 
+# set(SPIRV_REFLECT_EXECUTABLE OFF CACHE INTERNAL "")
+# set(SPIRV_REFLECT_EXAMPLES OFF CACHE INTERNAL "")
+# set(SPIRV_REFLECT_STATIC_LIB ON CACHE INTERNAL "")
+# add_subdirectory("${ST_DEPS_DIR}/SPIRV-Reflect" EXCLUDE_FROM_ALL)
+
+# make library
 file(GLOB SOURCES "src/*.cpp")
 file(GLOB HEADERS "include/ShaderTranspiler/*.hpp")
 file(GLOB CHEADERS "include/ShaderTranspiler/*.h")
@@ -46,6 +52,7 @@ target_link_libraries("${PROJECT_NAME}" PRIVATE
     "spirv-cross-hlsl"
     "spirv-cross-msl"
     "spirv-cross-reflect"
+  #  "spirv-reflect-static"
 )
 target_include_directories("${PROJECT_NAME}" 
     PUBLIC "include/"
