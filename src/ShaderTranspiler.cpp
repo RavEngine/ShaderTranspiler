@@ -43,6 +43,20 @@ static ReflectData getReflectData(const spirv_cross::Compiler& comp){
 	return refl;
 }
 
+
+/**
+* Set the name of the main function 
+* @param compiler the compiler instance to use
+* @param entrypoint_name the new name for the shader entrypoint function
+*/
+template<typename T>
+static void setEntryPoint(T& compiler, const std::string& entrypoint_name) {
+	auto entryPoints = compiler.get_entry_points_and_stages();
+	if (!entryPoints.empty()) {
+		compiler.rename_entry_point(entryPoints[0].name, entrypoint_name, entryPoints[0].execution_model);
+	}
+}
+
 /**
  * Factory
  * see https://github.com/ForestCSharp/VkCppRenderer/blob/master/Src/Renderer/GLSL/ShaderCompiler.hpp for more info
@@ -147,7 +161,12 @@ TBuiltInResource CreateDefaultTBuiltInResource(){
 	};
 }
 
-const spirvbytes CompileGLSL(const std::string_view& source, const EShLanguage ShaderType, const std::vector<std::filesystem::path>& includePaths) {
+struct CompileGLSLResult {
+	spirvbytes spirvdata;
+	std::vector<Uniform> uniforms;
+};
+
+const CompileGLSLResult CompileGLSL(const std::string_view& source, const EShLanguage ShaderType, const std::vector<std::filesystem::path>& includePaths) {
 	//initialize. Do only once per process!
 	if (!glslAngInitialized)
 	{
@@ -218,13 +237,27 @@ const spirvbytes CompileGLSL(const std::string_view& source, const EShLanguage S
 		throw std::runtime_error(msg);
 	}
 
-	// ========= convert to spir-v =============
-	std::vector<unsigned int> SpirV;
+	CompileGLSLResult result;
+
+	// ========= convert to spir-v ============
+
 	spv::SpvBuildLogger logger;
 	glslang::SpvOptions spvOptions;
-	glslang::GlslangToSpv(*Program.getIntermediate(ShaderType), SpirV, &logger, &spvOptions);
+	glslang::GlslangToSpv(*Program.getIntermediate(ShaderType), result.spirvdata, &logger, &spvOptions);
 
-	return SpirV;
+	// get uniform information
+	Program.buildReflection();
+	auto nUniforms = Program.getNumLiveUniformVariables();
+	for (int i = 0; i < nUniforms; i++) {
+		Uniform uniform;
+		uniform.name = std::move(Program.getUniformName(i));
+		uniform.arraySize = Program.getUniformArraySize(i);
+		uniform.bufferOffset = Program.getUniformBufferOffset(i);
+		uniform.glDefineType = Program.getUniformType(i);
+		result.uniforms.push_back(std::move(uniform));
+	}
+
+	return result;
 }
 
 /**
@@ -232,7 +265,7 @@ const spirvbytes CompileGLSL(const std::string_view& source, const EShLanguage S
  @param filename the file to compile
  @param ShaderType the type of shader to compile
  */
-const spirvbytes CompileGLSLFromFile(const FileCompileTask& task, const EShLanguage ShaderType){
+const CompileGLSLResult CompileGLSLFromFile(const FileCompileTask& task, const EShLanguage ShaderType){
 	
 	
 	//Load GLSL into a string
@@ -265,6 +298,9 @@ IMResult SPIRVToESSL(const spirvbytes& bin, const Options& opt, spv::ExecutionMo
 	options.version = opt.version;
 	options.es = opt.mobile;
 	glsl.set_common_options(options);
+
+	setEntryPoint(glsl, opt.entryPoint);
+
 	return {glsl.compile(), getReflectData(glsl)};
 }
 
@@ -278,6 +314,9 @@ IMResult SPIRVToHLSL(const spirvbytes& bin, const Options& opt, spv::ExecutionMo
 	
 	spirv_cross::CompilerHLSL::Options options;
 	hlsl.set_hlsl_options(options);
+
+	setEntryPoint(hlsl, opt.entryPoint);
+
 	return {hlsl.compile(), getReflectData(hlsl)};
 }
 
@@ -296,6 +335,11 @@ IMResult SPIRVtoMSL(const spirvbytes& bin, const Options& opt, spv::ExecutionMod
 	options.set_msl_version(major,minor);
 	options.platform = opt.mobile ? spirv_cross::CompilerMSL::Options::Platform::iOS : spirv_cross::CompilerMSL::Options::Platform::macOS;
 	msl.set_msl_options(options);
+
+	// TODO: see shaderc_metal.cpp:562 for setting resource bindings
+
+	setEntryPoint(msl, opt.entryPoint);
+
 	return {msl.compile(), getReflectData(msl)};
 }
 
@@ -430,11 +474,15 @@ CompileResult ShaderTranspiler::CompileTo(const FileCompileTask& task, TargetAPI
 
 	//generate spirv
 	auto spirv = CompileGLSLFromFile(task, types.type);
-	return CompileSpirVTo(spirv, api, opt, types);
+	auto compres = CompileSpirVTo(spirv.spirvdata, api, opt, types);
+	compres.data.uniformData = std::move(spirv.uniforms);
+	return compres;
 }
 
 CompileResult ShaderTranspiler::CompileTo(const MemoryCompileTask& task, TargetAPI api, const Options& opt) {
 	auto types = ShaderStageToInternal(task.stage);
 	auto spirv = CompileGLSL(task.source, types.type, task.includePaths);
-	return CompileSpirVTo(spirv, api, opt, types);
+	auto compres = CompileSpirVTo(spirv.spirvdata, api, opt, types);
+	compres.data.uniformData = std::move(spirv.uniforms);
+	return compres;
 }

@@ -68,9 +68,22 @@ struct ReflectData{
 	std::vector<Resource> separate_samplers;
 };
 
+struct Uniform
+{
+	std::string name;
+	int glDefineType;
+	uint8_t arraySize = 0;
+	uint16_t bufferOffset = 0;
+	uint8_t texComponent = 0;
+	uint8_t texDimension = 0;
+	uint16_t texFormat = 0;
+};
+
+
 struct IMResult{
-	std::string result;
+	std::string shaderData;
 	ReflectData reflectData;
+	std::vector<Uniform> uniformData;
 };
 
 struct CompileResult{
