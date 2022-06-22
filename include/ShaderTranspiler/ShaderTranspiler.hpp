@@ -79,11 +79,16 @@ struct Uniform
 	uint16_t texFormat = 0;
 };
 
+struct LiveAttribute {
+	std::string name;
+};
+
 
 struct IMResult{
 	std::string shaderData;
 	ReflectData reflectData;
 	std::vector<Uniform> uniformData;
+	std::vector<LiveAttribute> attributeData;
 };
 
 struct CompileResult{

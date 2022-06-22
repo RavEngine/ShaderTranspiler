@@ -164,6 +164,7 @@ TBuiltInResource CreateDefaultTBuiltInResource(){
 struct CompileGLSLResult {
 	spirvbytes spirvdata;
 	std::vector<Uniform> uniforms;
+	std::vector<LiveAttribute> attributes;
 };
 
 const CompileGLSLResult CompileGLSL(const std::string_view& source, const EShLanguage ShaderType, const std::vector<std::filesystem::path>& includePaths) {
@@ -228,10 +229,10 @@ const CompileGLSLResult CompileGLSL(const std::string_view& source, const EShLan
 	}
 
 	// ============== pass parsed shader and link it ==============
-	glslang::TProgram Program;
-	Program.addShader(&Shader);
+	glslang::TProgram program;
+	program.addShader(&Shader);
 
-	if (!Program.link(messages))
+	if (!program.link(messages))
 	{
 		std::string msg = string("GLSL Linking failed") + Shader.getInfoLog() + "\n" + Shader.getInfoDebugLog();
 		throw std::runtime_error(msg);
@@ -243,18 +244,25 @@ const CompileGLSLResult CompileGLSL(const std::string_view& source, const EShLan
 
 	spv::SpvBuildLogger logger;
 	glslang::SpvOptions spvOptions;
-	glslang::GlslangToSpv(*Program.getIntermediate(ShaderType), result.spirvdata, &logger, &spvOptions);
+	glslang::GlslangToSpv(*program.getIntermediate(ShaderType), result.spirvdata, &logger, &spvOptions);
 
 	// get uniform information
-	Program.buildReflection();
-	auto nUniforms = Program.getNumLiveUniformVariables();
+	program.buildReflection();
+	auto nUniforms = program.getNumLiveUniformVariables();
 	for (int i = 0; i < nUniforms; i++) {
 		Uniform uniform;
-		uniform.name = std::move(Program.getUniformName(i));
-		uniform.arraySize = Program.getUniformArraySize(i);
-		uniform.bufferOffset = Program.getUniformBufferOffset(i);
-		uniform.glDefineType = Program.getUniformType(i);
+		uniform.name = std::move(program.getUniformName(i));
+		uniform.arraySize = program.getUniformArraySize(i);
+		uniform.bufferOffset = program.getUniformBufferOffset(i);
+		uniform.glDefineType = program.getUniformType(i);
 		result.uniforms.push_back(std::move(uniform));
+	}
+
+	// get LiveAttribute data
+	auto nLiveAttr = program.getNumLiveAttributes();
+	for (int i = 0; i < nLiveAttr; i++) {
+		auto name = program.getAttributeName(i);
+		result.attributes.push_back({ name });
 	}
 
 	return result;
@@ -476,6 +484,7 @@ CompileResult ShaderTranspiler::CompileTo(const FileCompileTask& task, TargetAPI
 	auto spirv = CompileGLSLFromFile(task, types.type);
 	auto compres = CompileSpirVTo(spirv.spirvdata, api, opt, types);
 	compres.data.uniformData = std::move(spirv.uniforms);
+	compres.data.attributeData = std::move(spirv.attributes);
 	return compres;
 }
 
@@ -484,5 +493,6 @@ CompileResult ShaderTranspiler::CompileTo(const MemoryCompileTask& task, TargetA
 	auto spirv = CompileGLSL(task.source, types.type, task.includePaths);
 	auto compres = CompileSpirVTo(spirv.spirvdata, api, opt, types);
 	compres.data.uniformData = std::move(spirv.uniforms);
+	compres.data.attributeData = std::move(spirv.attributes);
 	return compres;
 }
