@@ -100,6 +100,10 @@ struct Options{
 	uint32_t version;
 	bool mobile;
 	std::string entryPoint = "frag";
+	struct UniformBufferSettings{
+		std::string newBufferName;
+		bool renameBuffer = false;
+	} uniformBufferSettings;
 };
 
 class ShaderTranspiler{

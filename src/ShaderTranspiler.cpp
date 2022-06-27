@@ -344,11 +344,28 @@ IMResult SPIRVtoMSL(const spirvbytes& bin, const Options& opt, spv::ExecutionMod
 	options.platform = opt.mobile ? spirv_cross::CompilerMSL::Options::Platform::iOS : spirv_cross::CompilerMSL::Options::Platform::macOS;
 	msl.set_msl_options(options);
 
+	spirv_cross::MSLResourceBinding newBinding;
+	newBinding.stage = model;
+	
+	const auto refldata = getReflectData(msl);
+	if (opt.uniformBufferSettings.renameBuffer){
+		for (auto &resource : refldata.uniform_buffers)
+		{
+			unsigned set = msl.get_decoration( resource.id, spv::DecorationDescriptorSet );
+			unsigned binding = msl.get_decoration( resource.id, spv::DecorationBinding );
+			newBinding.desc_set = set;
+			newBinding.binding = binding;
+			newBinding.msl_buffer = 0;
+			msl.add_msl_resource_binding( newBinding );
+			
+			msl.set_name(resource.id, "_mtl_u");
+		}
+	}
 	// TODO: see shaderc_metal.cpp:562 for setting resource bindings
 
 	setEntryPoint(msl, opt.entryPoint);
 
-	return {msl.compile(), getReflectData(msl)};
+	return {msl.compile(), refldata};
 }
 
 /**
