@@ -6,7 +6,7 @@
 #include <spirv_hlsl.hpp>
 #include <spirv_msl.hpp>
 #include <spirv-tools/optimizer.hpp>
-#include <spirv_reflect.hpp>
+#include <spirv_reflect.h>
 #include <iostream>
 #include <sstream>
 
@@ -36,10 +36,9 @@ typedef std::vector<uint32_t> spirvbytes;
 
 ReflectData::Resource::Resource(const spirv_cross::Resource& other) : id(other.id), type_id(other.type_id), base_type_id(other.base_type_id), name(std::move(other.name)){}
 
-static ReflectData getReflectData(const spirv_cross::Compiler& comp){
+static ReflectData getReflectData(const spirv_cross::Compiler& comp, const spirvbytes& spirvdata){
 	auto rsc = comp.get_shader_resources();
-	
-	
+
 	ReflectData refl{
 		.uniform_buffers{rsc.uniform_buffers.data(),rsc.uniform_buffers.begin() + rsc.uniform_buffers.size()},
 		.storage_buffers{rsc.storage_buffers.data(),rsc.storage_buffers.begin() + rsc.storage_buffers.size()},
@@ -55,6 +54,48 @@ static ReflectData getReflectData(const spirv_cross::Compiler& comp){
 		.separate_samplers{rsc.separate_samplers.data(),rsc.separate_samplers.begin() + rsc.separate_samplers.size()},
 	};
 	
+	
+	// since the data in stage_inputs, etc is in effectively random order
+	// we need to use spirv-reflect to get the locations and order them properly
+	SpvReflectShaderModule module;
+	SpvReflectResult result = spvReflectCreateShaderModule(spirvdata.size() * sizeof(spirvdata[0]), spirvdata.data(), &module);
+	if (result != SPV_REFLECT_RESULT_SUCCESS){
+		throw runtime_error("SPIRV reflection capture failed");
+	}
+	
+	const auto sortfn = [](const auto& spvreflvars, auto& inoutscontainer){
+		std::unordered_map<std::string_view, uint16_t> varToPos;
+		for(const auto& var : spvreflvars){
+			varToPos[var->name] = var->location;
+		}
+		
+		std::sort(inoutscontainer.begin(), inoutscontainer.end(), [&](const auto& a, const auto& b){
+			return varToPos[a.name] < varToPos[b.name];
+		});
+	};
+	
+	// sort inputs
+	{
+		uint32_t var_count = 0;
+		result = spvReflectEnumerateInputVariables(&module, &var_count, NULL);
+		std::vector<SpvReflectInterfaceVariable*> input_vars;
+		input_vars.resize(var_count);
+		result = spvReflectEnumerateInputVariables(&module, &var_count, input_vars.data());
+		
+		sortfn(input_vars, refl.stage_inputs);
+	}
+	// sort outputs
+	{
+		uint32_t var_count = 0;
+		result = spvReflectEnumerateOutputVariables(&module, &var_count, NULL);
+		std::vector<SpvReflectInterfaceVariable*> output_vars;
+		output_vars.resize(var_count);
+		result = spvReflectEnumerateOutputVariables(&module, &var_count, output_vars.data());
+		
+		sortfn(output_vars, refl.stage_outputs);
+	}
+	
+	spvReflectDestroyShaderModule(&module);
 	
 	return refl;
 }
@@ -325,7 +366,7 @@ IMResult SPIRVToESSL(const spirvbytes& bin, const Options& opt, spv::ExecutionMo
 
 	setEntryPoint(glsl, opt.entryPoint);
 
-	return {glsl.compile(), "", getReflectData(glsl)};
+	return {glsl.compile(), "", getReflectData(glsl,bin)};
 }
 
 /**
@@ -342,7 +383,7 @@ IMResult SPIRVToHLSL(const spirvbytes& bin, const Options& opt, spv::ExecutionMo
 
 	setEntryPoint(hlsl, opt.entryPoint);
 
-	return {hlsl.compile(), "", getReflectData(hlsl)};
+	return {hlsl.compile(), "", getReflectData(hlsl,bin)};
 }
 
 #ifdef ST_DXIL_ENABLED
@@ -459,7 +500,7 @@ IMResult SPIRVtoMSL(const spirvbytes& bin, const Options& opt, spv::ExecutionMod
 	spirv_cross::MSLResourceBinding newBinding;
 	newBinding.stage = model;
 	
-	const auto refldata = getReflectData(msl);
+	const auto refldata = getReflectData(msl,bin);
 	if (opt.uniformBufferSettings.renameBuffer){
 		for (auto &resource : refldata.uniform_buffers)
 		{

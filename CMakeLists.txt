@@ -26,6 +26,8 @@ set(SPIRV_SKIP_TESTS ON CACHE INTERNAL "")
 set(SPIRV_WERROR OFF CACHE INTERNAL "")
 add_subdirectory("${ST_DEPS_DIR}/SPIRV-Tools" EXCLUDE_FROM_ALL)
 
+add_subdirectory("${ST_DEPS_DIR}/SPIRV-Reflect" EXCLUDE_FROM_ALL)
+
 if(ST_BUNDLED_DXC)
     set(CMAKE_EXPORT_COMPILE_COMMANDS ON CACHE BOOL "")
     set(LLVM_APPEND_VC_REV ON CACHE BOOL "") 
@@ -76,6 +78,7 @@ target_link_libraries("${PROJECT_NAME}" PRIVATE
     spirv-cross-msl
     spirv-cross-reflect
     SPIRV-Tools
+    SPIRV-Reflect
 )
 if(ST_BUNDLED_DXC)
     target_link_libraries("${PROJECT_NAME}" PRIVATE 
