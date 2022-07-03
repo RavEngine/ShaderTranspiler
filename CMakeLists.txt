@@ -2,6 +2,7 @@ cmake_minimum_required(VERSION 3.17)
 set(CMAKE_XCODE_GENERATE_SCHEME OFF CACHE INTERNAL "")
 
 option(ST_ENABLE_TEST "Enable tests" ON)
+option(ST_BUNDLED_DXC "Use the bundled DirectXShaderCompiler (required for cross-platform DXIL" OFF)
 PROJECT(ShaderTranspiler)
 
 SET(ST_DEPS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/deps")
@@ -25,10 +26,32 @@ set(SPIRV_SKIP_TESTS ON CACHE INTERNAL "")
 set(SPIRV_WERROR OFF CACHE INTERNAL "")
 add_subdirectory("${ST_DEPS_DIR}/SPIRV-Tools" EXCLUDE_FROM_ALL)
 
-# set(SPIRV_REFLECT_EXECUTABLE OFF CACHE INTERNAL "")
-# set(SPIRV_REFLECT_EXAMPLES OFF CACHE INTERNAL "")
-# set(SPIRV_REFLECT_STATIC_LIB ON CACHE INTERNAL "")
-# add_subdirectory("${ST_DEPS_DIR}/SPIRV-Reflect" EXCLUDE_FROM_ALL)
+if(ST_BUNDLED_DXC)
+    set(CMAKE_EXPORT_COMPILE_COMMANDS ON CACHE BOOL "")
+    set(LLVM_APPEND_VC_REV ON CACHE BOOL "") 
+    set(LLVM_DEFAULT_TARGET_TRIPLE "dxil-ms-dx" CACHE STRING "")
+    set(LLVM_ENABLE_EH ON CACHE BOOL "") 
+    set(LLVM_ENABLE_RTTI ON CACHE BOOL "") 
+    set(LLVM_INCLUDE_DOCS OFF CACHE BOOL "") 
+    set(LLVM_INCLUDE_EXAMPLES OFF CACHE BOOL "") 
+    set(LLVM_INCLUDE_TESTS OFF CACHE BOOL "") 
+    set(LLVM_OPTIMIZED_TABLEGEN OFF CACHE BOOL "") 
+    set(LLVM_REQUIRES_EH ON CACHE BOOL "") 
+    set(LLVM_REQUIRES_RTTI ON CACHE BOOL "") 
+    set(LLVM_TARGETS_TO_BUILD "None" CACHE STRING "")
+    set(LIBCLANG_BUILD_STATIC ON CACHE BOOL "") 
+    set(CLANG_BUILD_EXAMPLES OFF CACHE BOOL "") 
+    set(CLANG_CL OFF CACHE BOOL "") 
+    set(CLANG_ENABLE_ARCMT OFF CACHE BOOL "") 
+    set(CLANG_ENABLE_STATIC_ANALYZER OFF CACHE BOOL "") 
+    set(CLANG_INCLUDE_TESTS OFF CACHE BOOL "") 
+    set(HLSL_INCLUDE_TESTS ON CACHE BOOL "") 
+    set(ENABLE_SPIRV_CODEGEN OFF CACHE BOOL "") 
+    set(SPIRV_BUILD_TESTS OFF CACHE BOOL "")
+    set(LLVM_INCLUDE_TOOLS ON CACHE INTERNAL "")
+    set(LLVM_BUILD_TOOLS ON CACHE INTERNAL "")
+    add_subdirectory("${ST_DEPS_DIR}/DirectXShaderCompiler" EXCLUDE_FROM_ALL)
+endif()
 
 # make library
 file(GLOB SOURCES "src/*.cpp")
@@ -44,16 +67,29 @@ target_include_directories("${PROJECT_NAME}" PRIVATE
 )
 
 target_link_libraries("${PROJECT_NAME}" PRIVATE 
-    "glslang"
-    "SPIRV"
-    "SPIRV-Tools-opt"
-    "SPIRV-Tools-reduce"
-    "spirv-cross-glsl"
-    "spirv-cross-hlsl"
-    "spirv-cross-msl"
-    "spirv-cross-reflect"
-  #  "spirv-reflect-static"
+    glslang
+    SPIRV
+    SPIRV-Tools-opt
+    SPIRV-Tools-reduce
+    spirv-cross-glsl
+    spirv-cross-hlsl
+    spirv-cross-msl
+    spirv-cross-reflect
+    SPIRV-Tools
 )
+if(ST_BUNDLED_DXC)
+    target_link_libraries("${PROJECT_NAME}" PRIVATE 
+        dxclib
+        dxcompiler
+    )
+    target_compile_definitions("${PROJECT_NAME}" PUBLIC -DST_BUNDLED_DXC=1)
+    target_include_directories("${PROJECT_NAME}" PRIVATE
+        PUBLIC "${ST_DEPS_DIR}/DirectXShaderCompiler/include"
+    )
+else()
+    target_compile_definitions("${PROJECT_NAME}" PUBLIC -DST_BUNDLED_DXC=0)
+endif()
+
 target_include_directories("${PROJECT_NAME}" 
     PUBLIC "include/"
     PUBLIC "${ST_DEPS_DIR}/glslang/glslang/" # TODO: figure out how to not need this   

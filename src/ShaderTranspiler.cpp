@@ -10,6 +10,20 @@
 #include <iostream>
 #include <sstream>
 
+#if __APPLE__
+#include <unistd.h>	// for metal shader compiler
+#endif
+
+#if ST_BUNDLED_DXC
+	#include <dxc/Support/Global.h>
+	#include <dxc/Support/Unicode.h>
+	#include <dxc/Support/WinAdapter.h>
+	#include <dxc/Support/WinIncludes.h>
+	#include <dxc/dxcapi.h>
+#endif
+
+
+
 using namespace std;
 using namespace std::filesystem;
 using namespace shadert;
@@ -309,7 +323,7 @@ IMResult SPIRVToESSL(const spirvbytes& bin, const Options& opt, spv::ExecutionMo
 
 	setEntryPoint(glsl, opt.entryPoint);
 
-	return {glsl.compile(), getReflectData(glsl)};
+	return {glsl.compile(), "", getReflectData(glsl)};
 }
 
 /**
@@ -325,8 +339,68 @@ IMResult SPIRVToHLSL(const spirvbytes& bin, const Options& opt, spv::ExecutionMo
 
 	setEntryPoint(hlsl, opt.entryPoint);
 
-	return {hlsl.compile(), getReflectData(hlsl)};
+	return {hlsl.compile(), "", getReflectData(hlsl)};
 }
+
+#if ST_DXIL_ENABLED
+IMResult SPIRVToDXIL(const spirvbytes& bin, const Options& opt, spv::ExecutionModel model){
+	auto hlsl = SPIRVToHLSL(bin,opt,model);
+	
+#if ST_BUNDLED_DXC
+	#error Bundled DXC is not yet implemented
+	CComPtr<IDxcLibrary> library;
+	HRESULT hr = DxcCreateInstance(CLSID_DxcLibrary, IID_PPV_ARGS(&library));
+	//if(FAILED(hr)) Handle error...
+
+	CComPtr<IDxcCompiler> compiler;
+	hr = DxcCreateInstance(CLSID_DxcCompiler, IID_PPV_ARGS(&compiler));
+	//if(FAILED(hr)) Handle error...
+
+	uint32_t codePage = CP_UTF8;
+	CComPtr<IDxcBlobEncoding> sourceBlob;
+	hr = library->CreateBlobFromFile(L"PS.hlsl", &codePage, &sourceBlob);
+	//if(FAILED(hr)) Handle file loading error...
+
+	CComPtr<IDxcOperationResult> result;
+	hr = compiler->Compile(
+						   sourceBlob, // pSource
+						   L"PS.hlsl", // pSourceName
+						   L"main", // pEntryPoint
+						   L"PS_6_0", // pTargetProfile
+						   NULL, 0, // pArguments, argCount
+						   NULL, 0, // pDefines, defineCount
+						   NULL, // pIncludeHandler
+						   &result); // ppResult
+	if(SUCCEEDED(hr))
+		result->GetStatus(&hr);
+	if(FAILED(hr))
+	{
+		if(result)
+		{
+			CComPtr<IDxcBlobEncoding> errorsBlob;
+			hr = result->GetErrorBuffer(&errorsBlob);
+			if(SUCCEEDED(hr) && errorsBlob)
+			{
+				wprintf(L"Compilation failed with errors:\n%hs\n",
+						(const char*)errorsBlob->GetBufferPointer());
+			}
+		}
+		// Handle compilation error...
+	}
+	CComPtr<IDxcBlob> code;
+	result->GetResult(&code);
+	
+	hlsl.binaryData = "";
+
+#elif defined _MSC_VER
+	hlsl.binaryData = "";
+#else
+	#error DXIL is not available on this platform
+#endif
+	
+	return hlsl;
+}
+#endif
 
 /**
  Decompile SPIR-V to Metal shader
@@ -365,8 +439,41 @@ IMResult SPIRVtoMSL(const spirvbytes& bin, const Options& opt, spv::ExecutionMod
 
 	setEntryPoint(msl, opt.entryPoint);
 
-	return {msl.compile(), refldata};
+	return {msl.compile(), "", refldata};
 }
+
+#ifdef __APPLE__
+IMResult SPIRVtoMBL(const spirvbytes& bin, const Options& opt, spv::ExecutionModel model){
+	// first make metal source shader
+	auto MSLResult = SPIRVtoMSL(bin, opt, model);
+	
+	int inpipefd[2];
+	int outpipefd[2];
+	
+	pipe(inpipefd);
+	pipe(outpipefd);
+	std::vector<char*> buffer(4096);	// 4kb, could make this bigger
+	
+	auto pid = fork();
+	if (pid == 0){
+		// this is the child - launch the compiler to make the AIR
+		dup2(outpipefd[0], STDIN_FILENO);
+		dup2(inpipefd[1], STDOUT_FILENO);
+		dup2(inpipefd[1], STDERR_FILENO);
+		
+		execl("/usr/bin/xcrun", "-sdk", "macosx metal","-c","/dev/stdin","-o"," /dev/stdout");
+		
+		// if this here runs, the child did not exit successfully
+		exit(1);
+	}
+	else{
+		// this is the parent - give compiler the data
+		write(outpipefd[1], MSLResult.sourceData.c_str(), MSLResult.sourceData.size());
+		// then read the response
+		read(inpipefd[0], buffer.data(), buffer.size());
+	}
+}
+#endif
 
 /**
  Serialize a SPIR-V binary
@@ -375,7 +482,7 @@ IMResult SPIRVtoMSL(const spirvbytes& bin, const Options& opt, spv::ExecutionMod
 CompileResult SerializeSPIRV(const spirvbytes& bin){
 	ostringstream buffer(ios::binary);
 	buffer.write((char*)&bin[0], bin.size() * sizeof(uint32_t));
-	return {{buffer.str()},true};
+	return CompileResult{{.sourceData = "", .binaryData = buffer.str()}};
 }
 
 /**
@@ -475,18 +582,28 @@ static APIConversion ShaderStageToInternal(ShaderStage api) {
 static CompileResult CompileSpirVTo(const spirvbytes& spirv, TargetAPI api, const Options& opt,  APIConversion types) {
 	switch (api) {
 	case TargetAPI::OpenGL_ES:
-		return CompileResult{ SPIRVToESSL(spirv,opt,types.model),false };
+		return CompileResult{ SPIRVToESSL(spirv,opt,types.model) };
 	case TargetAPI::OpenGL:
 		break;
 	case TargetAPI::Vulkan:
 		return SerializeSPIRV(OptimizeSPIRV(spirv, opt));
 		break;
-	case TargetAPI::DirectX:
-		return CompileResult{ SPIRVToHLSL(spirv,opt,types.model),false };
+	case TargetAPI::HLSL:
+		return CompileResult{ SPIRVToHLSL(spirv,opt,types.model) };
 		break;
 	case TargetAPI::Metal:
-		return CompileResult{ SPIRVtoMSL(spirv,opt,types.model),false };
+		return CompileResult{ SPIRVtoMSL(spirv,opt,types.model) };
 		break;
+#ifdef ST_DXIL_ENABLED
+	case TargetAPI::DXIL:
+		return CompileResult{ SPIRVToDXIL(spirv,opt,types.model) };
+		break;
+#endif
+#ifdef __APPLE__
+	case TargetAPI::MetalBinary:
+		return CompileResult{SPIRVtoMBL(spirv,opt,types.model)};
+		break;
+#endif
 	default:
 		throw runtime_error("Unsupported API");
 		break;

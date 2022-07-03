@@ -3,6 +3,10 @@
 #include <vector>
 #include <filesystem>
 
+#if ST_BUNDLED_DXC || defined _MSVC_VER
+	#define ST_DXIL_ENABLED
+#endif
+
 namespace spirv_cross{
 struct Resource;
 };
@@ -21,8 +25,14 @@ enum class TargetAPI{
 	OpenGL_ES = 0,
 	OpenGL,
 	Vulkan,
-	DirectX,
+	HLSL,
+#if ST_DXIL_ENABLED
+	DXIL,
+#endif
 	Metal,
+#ifdef __APPLE__
+	MetalBinary,	// requires xcrun 
+#endif
 };
 
 
@@ -85,7 +95,7 @@ struct LiveAttribute {
 
 
 struct IMResult{
-	std::string shaderData;
+	std::string sourceData, binaryData;
 	ReflectData reflectData;
 	std::vector<Uniform> uniformData;
 	std::vector<LiveAttribute> attributeData;
@@ -93,7 +103,6 @@ struct IMResult{
 
 struct CompileResult{
 	IMResult data;
-	bool isBinary;
 };
 
 struct Options{
