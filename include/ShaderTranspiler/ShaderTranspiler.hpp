@@ -2,8 +2,7 @@
 #include <string>
 #include <vector>
 #include <filesystem>
-
-#if ST_BUNDLED_DXC || defined _MSVC_VER
+#if ST_BUNDLED_DXC == 1 || defined _MSC_VER
 	#define ST_DXIL_ENABLED
 #endif
 
@@ -26,7 +25,7 @@ enum class TargetAPI{
 	OpenGL,
 	Vulkan,
 	HLSL,
-#if ST_DXIL_ENABLED
+#ifdef ST_DXIL_ENABLED
 	DXIL,
 #endif
 	Metal,

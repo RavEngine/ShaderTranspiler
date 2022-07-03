@@ -88,6 +88,12 @@ if(ST_BUNDLED_DXC)
     )
 else()
     target_compile_definitions("${PROJECT_NAME}" PUBLIC -DST_BUNDLED_DXC=0)
+    if(MSVC)
+         target_link_libraries("${PROJECT_NAME}" PRIVATE 
+            D3DCompiler.lib
+            d3d11.lib
+         )
+    endif()
 endif()
 
 target_include_directories("${PROJECT_NAME}" 

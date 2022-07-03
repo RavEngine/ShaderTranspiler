@@ -22,7 +22,9 @@
 	#include <dxc/dxcapi.h>
 #endif
 
-
+#ifdef _MSC_VER
+#include <d3dcompiler.h>
+#endif
 
 using namespace std;
 using namespace std::filesystem;
@@ -335,6 +337,7 @@ IMResult SPIRVToHLSL(const spirvbytes& bin, const Options& opt, spv::ExecutionMo
 	spirv_cross::CompilerHLSL hlsl(std::move(bin));
 	
 	spirv_cross::CompilerHLSL::Options options;
+	options.shader_model = opt.version;
 	hlsl.set_hlsl_options(options);
 
 	setEntryPoint(hlsl, opt.entryPoint);
@@ -342,10 +345,9 @@ IMResult SPIRVToHLSL(const spirvbytes& bin, const Options& opt, spv::ExecutionMo
 	return {hlsl.compile(), "", getReflectData(hlsl)};
 }
 
-#if ST_DXIL_ENABLED
+#ifdef ST_DXIL_ENABLED
 IMResult SPIRVToDXIL(const spirvbytes& bin, const Options& opt, spv::ExecutionModel model){
 	auto hlsl = SPIRVToHLSL(bin,opt,model);
-	
 #if ST_BUNDLED_DXC
 	#error Bundled DXC is not yet implemented
 	CComPtr<IDxcLibrary> library;
@@ -393,7 +395,43 @@ IMResult SPIRVToDXIL(const spirvbytes& bin, const Options& opt, spv::ExecutionMo
 	hlsl.binaryData = "";
 
 #elif defined _MSC_VER
-	hlsl.binaryData = "";
+	LPCSTR profile = nullptr;
+	switch (model) {
+	case decltype(model)::ExecutionModelVertex:
+		profile = "vs_5_0";
+		break;
+	case decltype(model)::ExecutionModelFragment:
+		profile = "ps_5_0";
+		break;
+	case decltype(model)::ExecutionModelGLCompute:
+		profile = "cs_5_0";
+		break;
+	default:
+		throw runtime_error("Invalid shader model");
+	}
+
+	ID3DBlob* code = nullptr;
+	ID3DBlob* errormsg = nullptr;
+	auto result = D3DCompile(
+		hlsl.sourceData.data(),
+		hlsl.sourceData.size(),
+		"ST_HLSL.hlsl",
+		nullptr,
+		nullptr,
+		"main",
+		profile,
+		D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION, //TODO: make this configurable, see https://docs.microsoft.com/en-us/windows/win32/direct3dhlsl/d3dcompile-constants for flags
+		0,			// see https://docs.microsoft.com/en-us/windows/win32/direct3dhlsl/d3dcompile-effect-constants for flags
+		&code,
+		&errormsg
+	);
+	if (result == S_OK) {
+		hlsl.binaryData = (char*)code->GetBufferPointer();
+	}
+	else {
+		throw runtime_error((char*)errormsg->GetBufferPointer());
+	}
+
 #else
 	#error DXIL is not available on this platform
 #endif
