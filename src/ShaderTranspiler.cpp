@@ -235,10 +235,15 @@ const CompileGLSLResult CompileGLSL(const std::string_view& source, const EShLan
 	const char* InputCString = source.data();
 
 	//determine the stage
-	glslang::TShader Shader(ShaderType);
+	glslang::TShader shader(ShaderType);
 
 	//set the associated strings (in this case one, but shader meta JSON can describe more. Pass as a C array and a size.
-	Shader.setStrings(&InputCString, 1);
+	shader.setStrings(&InputCString, 1);
+	shader.setAutoMapBindings(true);
+//	constexpr int textureBindingOffset = 16;
+//	shader.setShiftBinding(glslang::EResTexture, textureBindingOffset);
+//	shader.setShiftBinding(glslang::EResSampler, textureBindingOffset);
+//	shader.setShiftBinding(glslang::EResImage, textureBindingOffset);
 
 	//=========== vulkan versioning (should alow this to be passed in, or find out from the system) ========
 	const int DefaultVersion = 130;
@@ -247,9 +252,9 @@ const CompileGLSLResult CompileGLSL(const std::string_view& source, const EShLan
 	glslang::EShTargetClientVersion VulkanClientVersion = glslang::EShTargetVulkan_1_2;
 	glslang::EShTargetLanguageVersion TargetVersion = glslang::EShTargetSpv_1_5;
 
-	Shader.setEnvInput(glslang::EShSourceGlsl, ShaderType, glslang::EShClientVulkan, ClientInputSemanticsVersion);
-	Shader.setEnvClient(glslang::EShClientVulkan, VulkanClientVersion);
-	Shader.setEnvTarget(glslang::EShTargetSpv, TargetVersion);
+	shader.setEnvInput(glslang::EShSourceGlsl, ShaderType, glslang::EShClientVulkan, ClientInputSemanticsVersion);
+	shader.setEnvClient(glslang::EShClientVulkan, VulkanClientVersion);
+	shader.setEnvTarget(glslang::EShTargetSpv, TargetVersion);
 
 	auto DefaultTBuiltInResource = CreateDefaultTBuiltInResource();
 
@@ -268,30 +273,30 @@ const CompileGLSLResult CompileGLSL(const std::string_view& source, const EShLan
 
 	std::string PreprocessedGLSL;
 
-	if (!Shader.preprocess(&Resources, DefaultVersion, ENoProfile, false, false, messages, &PreprocessedGLSL, Includer))
+	if (!shader.preprocess(&Resources, DefaultVersion, ENoProfile, false, false, messages, &PreprocessedGLSL, Includer))
 	{
-		string msg = string("GLSL Preprocessing failed: ") + Shader.getInfoLog() + "\n" + Shader.getInfoDebugLog();
+		string msg = string("GLSL Preprocessing failed: ") + shader.getInfoLog() + "\n" + shader.getInfoDebugLog();
 		throw std::runtime_error(msg);
 	}
 
 	// update the stored strings (is the original set necessary?)
 	const char* PreprocessedCStr = PreprocessedGLSL.c_str();
-	Shader.setStrings(&PreprocessedCStr, 1);
+	shader.setStrings(&PreprocessedCStr, 1);
 
 	// ================ now parse the shader ================
-	if (!Shader.parse(&Resources, DefaultVersion, false, messages))
+	if (!shader.parse(&Resources, DefaultVersion, false, messages))
 	{
-		string msg = string("GLSL Parsing failed: ") + Shader.getInfoLog() + "\n" + Shader.getInfoDebugLog();
+		string msg = string("GLSL Parsing failed: ") + shader.getInfoLog() + "\n" + shader.getInfoDebugLog();
 		throw std::runtime_error(msg);
 	}
 
 	// ============== pass parsed shader and link it ==============
 	glslang::TProgram program;
-	program.addShader(&Shader);
+	program.addShader(&shader);
 
 	if (!program.link(messages))
 	{
-		std::string msg = string("GLSL Linking failed") + Shader.getInfoLog() + "\n" + Shader.getInfoDebugLog();
+		std::string msg = string("GLSL Linking failed") + shader.getInfoLog() + "\n" + shader.getInfoDebugLog();
 		throw std::runtime_error(msg);
 	}
 
@@ -499,7 +504,6 @@ IMResult SPIRVtoMSL(const spirvbytes& bin, const Options& opt, spv::ExecutionMod
 
 	spirv_cross::MSLResourceBinding newBinding;
 	newBinding.stage = model;
-	
 	const auto refldata = getReflectData(msl,bin);
 	if (opt.uniformBufferSettings.renameBuffer){
 		for (auto &resource : refldata.uniform_buffers)
