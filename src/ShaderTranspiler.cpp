@@ -500,6 +500,7 @@ IMResult SPIRVtoMSL(const spirvbytes& bin, const Options& opt, spv::ExecutionMod
 	uint32_t minor = opt.version % 10;
 	options.set_msl_version(major,minor);
 	options.platform = opt.mobile ? spirv_cross::CompilerMSL::Options::Platform::iOS : spirv_cross::CompilerMSL::Options::Platform::macOS;
+	options.enable_decoration_binding = true;	// order textures / samplers by binding order, not by order of first use
 	msl.set_msl_options(options);
 
 	spirv_cross::MSLResourceBinding newBinding;
