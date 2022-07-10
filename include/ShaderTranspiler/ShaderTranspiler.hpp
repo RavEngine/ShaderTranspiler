@@ -11,6 +11,9 @@ struct Resource;
 };
 
 namespace shadert{
+
+typedef std::vector<uint32_t> spirvbytes;
+
 enum class ShaderStage{
 	Vertex,
 	Fragment,

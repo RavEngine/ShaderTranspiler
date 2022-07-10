@@ -56,11 +56,15 @@ if(ST_BUNDLED_DXC)
 endif()
 
 # make library
-file(GLOB SOURCES "src/*.cpp")
-file(GLOB HEADERS "include/ShaderTranspiler/*.hpp")
-file(GLOB CHEADERS "include/ShaderTranspiler/*.h")
+file(GLOB SOURCES "src/*.cpp" "include/ShaderTranspiler/*.hpp" "include/ShaderTranspiler/*.h")
 
-add_library("${PROJECT_NAME}" ${SOURCES} ${CHEADERS} ${HEADERS})
+if(APPLE)
+	set(APPLEFILES "src/AppleFns.mm")
+    find_library(FOUNDATION_LIB Foundation REQUIRED)
+    add_definitions("-x objective-c++")
+endif()
+
+add_library("${PROJECT_NAME}" ${SOURCES} ${APPLEFILES})
 target_compile_features("${PROJECT_NAME}" PRIVATE cxx_std_20)
 set_target_properties("${PROJECT_NAME}" PROPERTIES XCODE_GENERATE_SCHEME ON)
 
@@ -79,6 +83,7 @@ target_link_libraries("${PROJECT_NAME}" PRIVATE
     spirv-cross-reflect
     SPIRV-Tools
     SPIRV-Reflect
+    ${FOUNDATION_LIB}
 )
 if(ST_BUNDLED_DXC)
     target_link_libraries("${PROJECT_NAME}" PRIVATE 

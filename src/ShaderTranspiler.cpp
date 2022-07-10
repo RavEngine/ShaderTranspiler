@@ -10,10 +10,6 @@
 #include <iostream>
 #include <sstream>
 
-#if __APPLE__
-#include <unistd.h>	// for metal shader compiler
-#endif
-
 #if ST_BUNDLED_DXC
 	#include <dxc/Support/Global.h>
 	#include <dxc/Support/Unicode.h>
@@ -31,8 +27,6 @@ using namespace std::filesystem;
 using namespace shadert;
 
 static bool glslAngInitialized = false;
-
-typedef std::vector<uint32_t> spirvbytes;
 
 ReflectData::Resource::Resource(const spirv_cross::Resource& other) : id(other.id), type_id(other.type_id), base_type_id(other.base_type_id), name(std::move(other.name)){}
 
@@ -224,6 +218,8 @@ struct CompileGLSLResult {
 	std::vector<LiveAttribute> attributes;
 };
 
+constexpr int textureBindingOffset = 16;
+
 const CompileGLSLResult CompileGLSL(const std::string_view& source, const EShLanguage ShaderType, const std::vector<std::filesystem::path>& includePaths) {
 	//initialize. Do only once per process!
 	if (!glslAngInitialized)
@@ -240,10 +236,9 @@ const CompileGLSLResult CompileGLSL(const std::string_view& source, const EShLan
 	//set the associated strings (in this case one, but shader meta JSON can describe more. Pass as a C array and a size.
 	shader.setStrings(&InputCString, 1);
 	shader.setAutoMapBindings(true);
-//	constexpr int textureBindingOffset = 16;
-//	shader.setShiftBinding(glslang::EResTexture, textureBindingOffset);
-//	shader.setShiftBinding(glslang::EResSampler, textureBindingOffset);
-//	shader.setShiftBinding(glslang::EResImage, textureBindingOffset);
+	shader.setShiftBinding(glslang::EResTexture, textureBindingOffset);
+	shader.setShiftBinding(glslang::EResSampler, textureBindingOffset);
+	shader.setShiftBinding(glslang::EResImage, textureBindingOffset);
 
 	//=========== vulkan versioning (should alow this to be passed in, or find out from the system) ========
 	const int DefaultVersion = 130;
@@ -526,39 +521,7 @@ IMResult SPIRVtoMSL(const spirvbytes& bin, const Options& opt, spv::ExecutionMod
 	return {msl.compile(), "", refldata};
 }
 
-#ifdef __APPLE__
-IMResult SPIRVtoMBL(const spirvbytes& bin, const Options& opt, spv::ExecutionModel model){
-	// first make metal source shader
-	auto MSLResult = SPIRVtoMSL(bin, opt, model);
-	
-	int inpipefd[2];
-	int outpipefd[2];
-	
-	pipe(inpipefd);
-	pipe(outpipefd);
-	std::vector<char*> buffer(4096);	// 4kb, could make this bigger
-	
-	auto pid = fork();
-	if (pid == 0){
-		// this is the child - launch the compiler to make the AIR
-		dup2(outpipefd[0], STDIN_FILENO);
-		dup2(inpipefd[1], STDOUT_FILENO);
-		dup2(inpipefd[1], STDERR_FILENO);
-		
-		execl("/usr/bin/xcrun", "-sdk", "macosx metal","-c","/dev/stdin","-o"," /dev/stdout");
-		
-		// if this here runs, the child did not exit successfully
-		exit(1);
-	}
-	else{
-		// this is the parent - give compiler the data
-		write(outpipefd[1], MSLResult.sourceData.c_str(), MSLResult.sourceData.size());
-		// then read the response
-		read(inpipefd[0], buffer.data(), buffer.size());
-	}
-}
-#endif
-
+extern IMResult SPIRVtoMBL(const spirvbytes& bin, const Options& opt, spv::ExecutionModel model);
 /**
  Serialize a SPIR-V binary
  @param bin the binary

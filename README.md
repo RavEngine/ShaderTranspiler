@@ -5,7 +5,9 @@ A clean and simple C++ library to convert GLSL shaders to HLSL, Metal, and Vulka
 ## Supported APIs:
 - GLSL -> ESSL (OpenGL ES) 
 - GLSL -> HLSL (DirectX)
+- GLSL -> DXIL (DirectX, Windows host only)
 - GLSL -> MSL (Metal, mobile and desktop)
+- GLSL -> MSL Binary (macOS host only, requires Xcode to be installed)
 - GLSL -> SPIR-V (Vulkan)
 
 
