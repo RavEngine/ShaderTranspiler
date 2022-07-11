@@ -1,9 +1,5 @@
 #include "ShaderTranspiler.hpp"
-#include <SPIRV/GlslangToSpv.h>
 #include <spirv_msl.hpp>
-#include <spirv-tools/optimizer.hpp>
-
-#import <Foundation/NSTask.h>
 #import <Foundation/Foundation.h>
 
 using namespace shadert;
@@ -39,17 +35,15 @@ executeProcessResult executeProcess(NSString* launchPath, NSArray<NSString*>* ar
 	
 	NSData* outdata = [[taskStdout fileHandleForReading] readDataToEndOfFile];
 	NSData* errdata = [[taskStderr fileHandleForReading] readDataToEndOfFile];
-	
+		
 	[[taskStdout fileHandleForReading] closeFile];
 	[[taskStderr fileHandleForReading] closeFile];
 	
-	[taskStdin dealloc];
-	[taskStdout dealloc];
-	[taskStderr dealloc];
+	int code = [task terminationStatus];
 	
 	// return exit code and the stdout/stderr data
 	return {
-		[task terminationStatus],
+		code,
 		outdata, errdata
 	};
 }
@@ -60,19 +54,29 @@ IMResult SPIRVtoMBL(const spirvbytes& bin, const Options& opt, spv::ExecutionMod
 	
 	// create the AIR
 	// the "-" argument tells it to read from stdin
+	//auto airResult = executeProcess(@"/usr/bin/xcrun", @[@"-sdk",@"macosx",@"metallib",@"vs.air",@"-o",@"vs.metallib"], nil);
 	auto airResult = executeProcess(@"/usr/bin/xcrun",@[@"-sdk",@"macosx",@"metal",@"-c",@"-x",@"metal",@"-",@"-o",@"/dev/stdout"],[NSData dataWithBytes:MSLResult.sourceData.data() length:MSLResult.sourceData.size()]);
 	
-	if (airResult.code == 0){
+	if (airResult.code == 0)
+	{
 		// now need to do it again to make the metallib from the AIR
-		auto mtllibResult = executeProcess(@"/usr/bin/xcrun", @[@"-sdk",@"macosx",@"metallib",@"-",@"-o",@"/dev/stdout"], airResult.outdata);
+		
+		// need to create a temporary file because metallib does not properly work with the standard output stream when launched by NSTask
+		NSString* fileName = [[NSTemporaryDirectory() stringByAppendingPathComponent:[[NSUUID UUID] UUIDString]] stringByAppendingPathExtension:@"mtllib"];
+		auto mtllibResult = executeProcess(@"/usr/bin/xcrun", @[@"-sdk",@"macosx",@"metallib",@"-",@"-o",fileName], airResult.outdata);
 		if (mtllibResult.code == 0){
 			using binary_t = decltype(MSLResult.binaryData)::value_type;
+			NSData* data = [NSData dataWithContentsOfFile:fileName];
 			
 			// this time the output is the final metallib
-			MSLResult.binaryData.assign((binary_t*)mtllibResult.outdata.bytes, (binary_t*)mtllibResult.outdata.bytes + mtllibResult.outdata.length);
+			MSLResult.binaryData.assign((binary_t*)data.bytes, (binary_t*)data.bytes + data.length);
+			
+			// delete the temporary
+			[NSFileManager.defaultManager removeItemAtPath:fileName error:nil];
 			return MSLResult;
 		}
 		else{
+			[NSFileManager.defaultManager removeItemAtPath:fileName error:nil];
 			throw std::runtime_error((const char*)mtllibResult.errdata.bytes);
 		}
 		

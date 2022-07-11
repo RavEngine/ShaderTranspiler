@@ -11,10 +11,6 @@
 #include <sstream>
 
 #if ST_BUNDLED_DXC
-	#include <dxc/Support/Global.h>
-	#include <dxc/Support/Unicode.h>
-	#include <dxc/Support/WinAdapter.h>
-	#include <dxc/Support/WinIncludes.h>
 	#include <dxc/dxcapi.h>
 #endif
 
@@ -389,29 +385,22 @@ IMResult SPIRVToHLSL(const spirvbytes& bin, const Options& opt, spv::ExecutionMo
 #ifdef ST_DXIL_ENABLED
 IMResult SPIRVToDXIL(const spirvbytes& bin, const Options& opt, spv::ExecutionModel model){
 	auto hlsl = SPIRVToHLSL(bin,opt,model);
+	
 #if ST_BUNDLED_DXC
-#define STR_T LPCWSTR
-#define CL L
-#else
-#define STR_T LPCSTR
-#define CL
-#endif
-
 	LPCWSTR profile = nullptr;
 	switch (model) {
-	case decltype(model)::ExecutionModelVertex:
-		profile = L"vs_5_0";
-		break;
-	case decltype(model)::ExecutionModelFragment:
-		profile = L"ps_5_0";
-		break;
-	case decltype(model)::ExecutionModelGLCompute:
-		profile = L"cs_5_0";
-		break;
-	default:
-		throw runtime_error("Invalid shader model");
+		case decltype(model)::ExecutionModelVertex:
+			profile = L"vs_5_0";
+			break;
+		case decltype(model)::ExecutionModelFragment:
+			profile = L"ps_5_0";
+			break;
+		case decltype(model)::ExecutionModelGLCompute:
+			profile = L"cs_5_0";
+			break;
+		default:
+			throw runtime_error("Invalid shader model");
 	}
-#if ST_BUNDLED_DXC
 	CComPtr<IDxcLibrary> library;
 	HRESULT hr = DxcCreateInstance(CLSID_DxcLibrary, IID_PPV_ARGS(&library));
 	if (FAILED(hr)) {
@@ -428,6 +417,10 @@ IMResult SPIRVToDXIL(const spirvbytes& bin, const Options& opt, spv::ExecutionMo
 	DxcCreateInstance(CLSID_DxcUtils, IID_PPV_ARGS(&pUtils));
 	CComPtr<IDxcBlobEncoding> sourceBlob;
 	hr = pUtils->CreateBlob(hlsl.sourceData.data(), hlsl.sourceData.size(), CP_UTF8, &sourceBlob);
+	
+	if (FAILED(hr)) {
+		throw runtime_error("Could not create source blob");
+	}
 
 	CComPtr<IDxcOperationResult> result;
 	hr = compiler->Compile(
@@ -441,6 +434,7 @@ IMResult SPIRVToDXIL(const spirvbytes& bin, const Options& opt, spv::ExecutionMo
 						   &result); // ppResult
 	if(SUCCEEDED(hr))
 		result->GetStatus(&hr);
+
 	if(FAILED(hr))
 	{
 		if(result)
@@ -453,13 +447,27 @@ IMResult SPIRVToDXIL(const spirvbytes& bin, const Options& opt, spv::ExecutionMo
 			}
 		}
 	}
+
 	CComPtr<IDxcBlob> code;
 	result->GetResult(&code);
-	
-	hlsl.binaryData = "";
+	using data_t = decltype(hlsl.binaryData)::value_type;
+	hlsl.binaryData.assign(static_cast<data_t*>(code->GetBufferPointer()), static_cast<data_t*>(code->GetBufferPointer()) + code->GetBufferSize());
 
 #elif defined _MSC_VER
-
+	LPCSTR profile = nullptr;
+	switch (model) {
+		case decltype(model)::ExecutionModelVertex:
+			profile = "vs_5_0";
+			break;
+		case decltype(model)::ExecutionModelFragment:
+			profile = "ps_5_0";
+			break;
+		case decltype(model)::ExecutionModelGLCompute:
+			profile = "cs_5_0";
+			break;
+		default:
+			throw runtime_error("Invalid shader model");
+	}
 	ID3DBlob* code = nullptr;
 	ID3DBlob* errormsg = nullptr;
 	auto result = D3DCompile(
