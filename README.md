@@ -5,7 +5,7 @@ A clean and simple C++ library to convert GLSL shaders to HLSL, Metal, and Vulka
 ## Supported APIs:
 - GLSL -> ESSL (OpenGL ES) 
 - GLSL -> HLSL (DirectX)
-- GLSL -> DXIL (DirectX, Windows host only)
+- GLSL -> DXIL\* (DirectX)
 - GLSL -> MSL (Metal, mobile and desktop)
 - GLSL -> MSL Binary (macOS host only, requires Xcode to be installed)
 - GLSL -> SPIR-V (Vulkan)
@@ -42,9 +42,9 @@ int main(){
     // call CompileTo and pass the CompileTask and the Options
     CompileResult result = s.CompileTo(task, TargetAPI::Vulkan, opt);
 
-    // the shader data is stored in the data field
-    cout << (result.isBinary? "Binary" : "Plain text") << "shader created, source = " << endl;
-    cout << result.data << endl;
+    // not all of these will be populated depending on the target
+    cout << result.sourceData << endl;
+    cout << result.binaryData << endl;
   }
   catch(exception& e){
     // library will throw on errors
@@ -67,6 +67,10 @@ target_link_libraries("your-program" PRIVATE "ShaderTranspiler")
 You will need a C++20 compiler to build the library (but not to use it, the header is compatible with C++17).
 
 If you only want to play around with the library, you can use one of the init scripts (`init-mac.sh`, `init-win.sh`) and modify `main.cpp` in the test folder.
+
+\* DXIL support is restricted to Windows hosts by default. To generate DXIL on non-Windows hosts, clone with submodules to get the [DirectXShaderCompiler](https://github.com/microsoft/DirectXShaderCompiler)
+source code, and set `ST_BUNDLED_DXC` to `1` in your CMake configuration. This will compile DXC from source and use that instead of the compiler that comes with Direct3D for Windows. Because of how big DXC is 
+and how long it takes to compile, this feature is disabled by default. 
 
 # Issue reporting
 Known issues:
