@@ -235,11 +235,12 @@ const CompileGLSLResult CompileGLSL(const std::string_view& source, const EShLan
 	shader.setShiftBinding(glslang::EResTexture, textureBindingOffset);
 	shader.setShiftBinding(glslang::EResSampler, textureBindingOffset);
 	shader.setShiftBinding(glslang::EResImage, textureBindingOffset);
+    shader.setEnvInputVulkanRulesRelaxed(); // use GL_EXT_vulkan_glsl_relaxed TODO: make this configurable
 
 	//=========== vulkan versioning (should alow this to be passed in, or find out from the system) ========
-	const int DefaultVersion = 130;
+	const int DefaultVersion = 460;
 
-	int ClientInputSemanticsVersion = DefaultVersion; // maps to, say, #define VULKAN 100
+	int ClientInputSemanticsVersion = DefaultVersion;
 	glslang::EShTargetClientVersion VulkanClientVersion = glslang::EShTargetVulkan_1_2;
 	glslang::EShTargetLanguageVersion TargetVersion = glslang::EShTargetSpv_1_5;
 
@@ -251,8 +252,6 @@ const CompileGLSLResult CompileGLSL(const std::string_view& source, const EShLan
 
 	TBuiltInResource Resources(DefaultTBuiltInResource);
 	EShMessages messages = (EShMessages)(EShMsgSpvRules | EShMsgVulkanRules);
-
-
 
 	// =============================== preprocess GLSL =============================
 	DirStackFileIncluder Includer;

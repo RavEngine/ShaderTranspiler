@@ -1,6 +1,8 @@
 //
-// Copyright (C) 2014 LunarG, Inc.
-// Copyright (C) 2015-2018 Google, Inc.
+// Copyright (C) 2002-2005  3Dlabs Inc. Ltd.
+// Copyright (C) 2013-2016 LunarG, Inc.
+// Copyright (C) 2016-2020 Google, Inc.
+// Modifications Copyright(C) 2021 Advanced Micro Devices, Inc.All rights reserved.
 //
 // All rights reserved.
 //
@@ -32,30 +34,5 @@
 // LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN
 // ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 // POSSIBILITY OF SUCH DAMAGE.
+//
 
-#pragma once
-
-#if defined(_MSC_VER) && _MSC_VER >= 1900
-    #pragma warning(disable : 4464) // relative include path contains '..'
-#endif
-
-#include "SpvTools.h"
-#include "glslang/Include/intermediate.h"
-
-#include <string>
-#include <vector>
-
-#include "Logger.h"
-
-namespace glslang {
-
-void GetSpirvVersion(std::string&);
-int GetSpirvGeneratorVersion();
-void GlslangToSpv(const glslang::TIntermediate& intermediate, std::vector<unsigned int>& spirv,
-                  SpvOptions* options = nullptr);
-void GlslangToSpv(const glslang::TIntermediate& intermediate, std::vector<unsigned int>& spirv,
-                  spv::SpvBuildLogger* logger, SpvOptions* options = nullptr);
-void OutputSpvBin(const std::vector<unsigned int>& spirv, const char* baseName);
-void OutputSpvHex(const std::vector<unsigned int>& spirv, const char* baseName, const char* varName);
-
-}
