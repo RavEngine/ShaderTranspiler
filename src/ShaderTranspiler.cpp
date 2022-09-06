@@ -286,7 +286,7 @@ const CompileGLSLResult CompileGLSL(const std::string_view& source, const EShLan
 
 	if (!program.link(messages))
 	{
-		std::string msg = string("GLSL Linking failed") + shader.getInfoLog() + "\n" + shader.getInfoDebugLog();
+		std::string msg = string("GLSL Linking failed:") + program.getInfoLog() + "\n" + program.getInfoDebugLog();
 		throw std::runtime_error(msg);
 	}
 
