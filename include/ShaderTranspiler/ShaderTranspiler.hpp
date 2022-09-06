@@ -1,6 +1,7 @@
 #pragma once
 #include <string>
 #include <vector>
+#include <array>
 #include <filesystem>
 #if ST_BUNDLED_DXC == 1 || defined _MSC_VER
 	#define ST_DXIL_ENABLED
@@ -78,6 +79,8 @@ struct ReflectData{
 	// these correspond to separate texture2D and samplers respectively.
 	std::vector<Resource> separate_images;
 	std::vector<Resource> separate_samplers;
+    
+    std::array<uint16_t,3> compute_dim{};
 };
 
 struct Uniform
