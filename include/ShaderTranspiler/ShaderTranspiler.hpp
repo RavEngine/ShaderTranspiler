@@ -60,7 +60,6 @@ struct ReflectData{
 		std::string name;
 		Resource(const spirv_cross::Resource&);
 	};
-
 	std::vector<Resource> uniform_buffers;
 	std::vector<Resource> storage_buffers;
 	std::vector<Resource> stage_inputs;

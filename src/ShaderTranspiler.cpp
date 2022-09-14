@@ -47,8 +47,8 @@ static ReflectData getReflectData(const spirv_cross::Compiler& comp, const spirv
 	
 	// since the data in stage_inputs, etc is in effectively random order
 	// we need to use spirv-reflect to get the locations and order them properly
-	SpvReflectShaderModule module;
-	SpvReflectResult result = spvReflectCreateShaderModule(spirvdata.size() * sizeof(spirvdata[0]), spirvdata.data(), &module);
+	SpvReflectShaderModule spvModule;
+	SpvReflectResult result = spvReflectCreateShaderModule(spirvdata.size() * sizeof(spirvdata[0]), spirvdata.data(), &spvModule);
 	if (result != SPV_REFLECT_RESULT_SUCCESS){
 		throw runtime_error("SPIRV reflection capture failed");
 	}
@@ -67,25 +67,29 @@ static ReflectData getReflectData(const spirv_cross::Compiler& comp, const spirv
 	// sort inputs
 	{
 		uint32_t var_count = 0;
-		result = spvReflectEnumerateInputVariables(&module, &var_count, NULL);
+		result = spvReflectEnumerateInputVariables(&spvModule, &var_count, NULL);
 		std::vector<SpvReflectInterfaceVariable*> input_vars;
 		input_vars.resize(var_count);
-		result = spvReflectEnumerateInputVariables(&module, &var_count, input_vars.data());
+		result = spvReflectEnumerateInputVariables(&spvModule, &var_count, input_vars.data());
 		
 		sortfn(input_vars, refl.stage_inputs);
 	}
 	// sort outputs
 	{
 		uint32_t var_count = 0;
-		result = spvReflectEnumerateOutputVariables(&module, &var_count, NULL);
+		result = spvReflectEnumerateOutputVariables(&spvModule, &var_count, NULL);
 		std::vector<SpvReflectInterfaceVariable*> output_vars;
 		output_vars.resize(var_count);
-		result = spvReflectEnumerateOutputVariables(&module, &var_count, output_vars.data());
+		result = spvReflectEnumerateOutputVariables(&spvModule, &var_count, output_vars.data());
 		
 		sortfn(output_vars, refl.stage_outputs);
 	}
+    // get compute dispatch dimensions
+    for(int i = 0; i < 3; i++){
+        refl.compute_dim[i] = comp.get_execution_mode_argument(spv::ExecutionMode::ExecutionModeLocalSize, i);
+    }
 	
-	spvReflectDestroyShaderModule(&module);
+	spvReflectDestroyShaderModule(&spvModule);
 	
 	return refl;
 }
@@ -578,13 +582,6 @@ IMResult SPIRVtoMSL(const spirvbytes& bin, const Options& opt, spv::ExecutionMod
 	setEntryPoint(msl, opt.entryPoint);
     auto res = msl.compile();
     
-    // get compute dispatch dimensions
-    if (model == spv::ExecutionModelGLCompute){
-        for(int i = 0; i < 3; i++){
-            refldata.compute_dim[i] = msl.get_execution_mode_argument(spv::ExecutionMode::ExecutionModeLocalSize, i);
-        }
-    }
-    
 	return {std::move(res), "", std::move(refldata)};
 }
 
@@ -631,7 +628,6 @@ spirvbytes OptimizeSPIRV(const spirvbytes& bin, const Options &options){
 			break;
 	}
 	
-	//create a general optimizer
 	spvtools::MessageConsumer consumer = [&](spv_message_level_t level, const char* source, const spv_position_t& position, const char* message){
 		switch(level){
 			case SPV_MSG_FATAL:
@@ -639,9 +635,14 @@ spirvbytes OptimizeSPIRV(const spirvbytes& bin, const Options &options){
 			case SPV_MSG_ERROR:
 				throw runtime_error(message);
 				break;
-
-		}
+            case SPV_MSG_WARNING:
+            case SPV_MSG_INFO:
+            case SPV_MSG_DEBUG:
+                break;
+        }
 	};
+    
+    //create a general optimizer
 	spvtools::Optimizer optimizer(target);
 	optimizer.RegisterSizePasses();
 	optimizer.RegisterPerformancePasses();
