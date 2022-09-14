@@ -28,7 +28,6 @@ ReflectData::Resource::Resource(const spirv_cross::Resource& other) : id(other.i
 
 static ReflectData getReflectData(const spirv_cross::Compiler& comp, const spirvbytes& spirvdata){
 	auto rsc = comp.get_shader_resources();
-
 	ReflectData refl{
 		.uniform_buffers{rsc.uniform_buffers.data(),rsc.uniform_buffers.begin() + rsc.uniform_buffers.size()},
 		.storage_buffers{rsc.storage_buffers.data(),rsc.storage_buffers.begin() + rsc.storage_buffers.size()},
@@ -354,13 +353,16 @@ const CompileGLSLResult CompileGLSLFromFile(const FileCompileTask& task, const E
  @param bin the SPIR-V binary to decompile
  @return OpenGL-ES source code
  */
-IMResult SPIRVToESSL(const spirvbytes& bin, const Options& opt, spv::ExecutionModel model){
-	spirv_cross::CompilerGLSL glsl(std::move(bin));
+IMResult SPIRVToOpenGL(const spirvbytes& bin, const Options& opt, spv::ExecutionModel model){
+	spirv_cross::CompilerGLSL glsl(bin);
 		
 	//set options
 	spirv_cross::CompilerGLSL::Options options;
 	options.version = opt.version;
 	options.es = opt.mobile;
+	options.emit_uniform_buffer_as_plain_uniforms = true;
+	options.vulkan_semantics = false;
+	options.emit_push_constant_as_uniform_buffer = false;
 	glsl.set_common_options(options);
 
 	setEntryPoint(glsl, opt.entryPoint);
@@ -374,7 +376,7 @@ IMResult SPIRVToESSL(const spirvbytes& bin, const Options& opt, spv::ExecutionMo
  @return HLSL source code
  */
 IMResult SPIRVToHLSL(const spirvbytes& bin, const Options& opt, spv::ExecutionModel model){
-	spirv_cross::CompilerHLSL hlsl(std::move(bin));
+	spirv_cross::CompilerHLSL hlsl(bin);
 	
 	spirv_cross::CompilerHLSL::Options options;
 	options.shader_model = opt.version;
@@ -508,7 +510,7 @@ IMResult SPIRVToDXIL(const spirvbytes& bin, const Options& opt, spv::ExecutionMo
  @return Metal shader source code
  */
 IMResult SPIRVtoMSL(const spirvbytes& bin, const Options& opt, spv::ExecutionModel model){
-	spirv_cross::CompilerMSL msl(std::move(bin));
+	spirv_cross::CompilerMSL msl(bin);
 	
 	spirv_cross::CompilerMSL::Options options;
 	uint32_t major = opt.version / 10;
@@ -584,8 +586,9 @@ IMResult SPIRVtoMSL(const spirvbytes& bin, const Options& opt, spv::ExecutionMod
     
 	return {std::move(res), "", std::move(refldata)};
 }
-
+#if __APPLE__
 extern IMResult SPIRVtoMBL(const spirvbytes& bin, const Options& opt, spv::ExecutionModel model);
+#endif
 /**
  Serialize a SPIR-V binary
  @param bin the binary
@@ -696,9 +699,9 @@ static APIConversion ShaderStageToInternal(ShaderStage api) {
 
 static CompileResult CompileSpirVTo(const spirvbytes& spirv, TargetAPI api, const Options& opt,  APIConversion types) {
 	switch (api) {
-	case TargetAPI::OpenGL_ES:
-		return CompileResult{ SPIRVToESSL(spirv,opt,types.model) };
 	case TargetAPI::OpenGL:
+	case TargetAPI::OpenGL_ES:
+		return CompileResult{ SPIRVToOpenGL(spirv,opt,types.model) };
 		break;
 	case TargetAPI::Vulkan:
 		return SerializeSPIRV(OptimizeSPIRV(spirv, opt));
