@@ -10,12 +10,25 @@
 #include <iostream>
 #include <sstream>
 
+#define NEW_DXC (ST_BUNDLED_DXC || _WIN32)
+
+#if NEW_DXC
+	#include <atlcomcli.h>
 #if ST_BUNDLED_DXC
 	#include <dxc/dxcapi.h>
+#else
+	#include <dxcapi.h>
+#endif
+	#include <wrl/client.h>
+	#include <cstdint>
+	#include <locale>
+	#include <codecvt>
+	using namespace Microsoft::WRL;	
 #endif
 
 #ifdef _MSC_VER
 #include <d3dcompiler.h>
+#pragma comment(lib, "d3dcompiler")
 #endif
 
 using namespace std;
@@ -391,76 +404,98 @@ IMResult SPIRVToHLSL(const spirvbytes& bin, const Options& opt, spv::ExecutionMo
 IMResult SPIRVToDXIL(const spirvbytes& bin, const Options& opt, spv::ExecutionModel model){
 	auto hlsl = SPIRVToHLSL(bin,opt,model);
 	
-#if ST_BUNDLED_DXC
-	LPCWSTR profile = nullptr;
-	switch (model) {
+#if NEW_DXC
+
+	auto compileWithNewDxc = [&] {
+		CComPtr<IDxcCompiler3> pCompiler;
+		DxcCreateInstance(CLSID_DxcCompiler, IID_PPV_ARGS(&pCompiler));
+
+		ComPtr<IDxcUtils> pUtils;
+		DxcCreateInstance(CLSID_DxcUtils, IID_PPV_ARGS(pUtils.GetAddressOf()));
+		ComPtr<IDxcBlobEncoding> pSource;
+		pUtils->CreateBlob(hlsl.sourceData.c_str(), hlsl.sourceData.size(), CP_UTF8, pSource.GetAddressOf());
+
+		LPCWSTR profile = nullptr;
+		switch (model) {
 		case decltype(model)::ExecutionModelVertex:
-			profile = L"vs_5_0";
+			profile = L"vs_6_1";
 			break;
 		case decltype(model)::ExecutionModelFragment:
-			profile = L"ps_5_0";
+			profile = L"ps_6_1";
 			break;
 		case decltype(model)::ExecutionModelGLCompute:
-			profile = L"cs_5_0";
+			profile = L"cs_6_1";
 			break;
 		default:
 			throw runtime_error("Invalid shader model");
-	}
-	CComPtr<IDxcLibrary> library;
-	HRESULT hr = DxcCreateInstance(CLSID_DxcLibrary, IID_PPV_ARGS(&library));
-	if (FAILED(hr)) {
-		throw runtime_error("DxcCreateInstance-CLSID_DxcLibrary failed");
-	}
-
-	CComPtr<IDxcCompiler> compiler;
-	hr = DxcCreateInstance(CLSID_DxcCompiler, IID_PPV_ARGS(&compiler));
-	if (FAILED(hr)) {
-		throw runtime_error("DxcCreateInstance-CLSID_DxcCompiler failed");
-	}
-
-	CComPtr<IDxcUtils> pUtils;
-	DxcCreateInstance(CLSID_DxcUtils, IID_PPV_ARGS(&pUtils));
-	CComPtr<IDxcBlobEncoding> sourceBlob;
-	hr = pUtils->CreateBlob(hlsl.sourceData.data(), hlsl.sourceData.size(), CP_UTF8, &sourceBlob);
-	
-	if (FAILED(hr)) {
-		throw runtime_error("Could not create source blob");
-	}
-
-	CComPtr<IDxcOperationResult> result;
-	hr = compiler->Compile(
-						   sourceBlob, // pSource
-						   L"inprog.hlsl", // pSourceName
-						   L"main", // pEntryPoint
-						   profile, // pTargetProfile
-						   NULL, 0, // pArguments, argCount
-						   NULL, 0, // pDefines, defineCount
-						   NULL, // pIncludeHandler
-						   &result); // ppResult
-	if(SUCCEEDED(hr))
-		result->GetStatus(&hr);
-
-	if(FAILED(hr))
-	{
-		if(result)
-		{
-			CComPtr<IDxcBlobEncoding> errorsBlob;
-			hr = result->GetErrorBuffer(&errorsBlob);
-			if(SUCCEEDED(hr) && errorsBlob)
-			{
-				throw runtime_error((const char*)errorsBlob->GetBufferPointer());
-			}
 		}
-	}
+		std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>> converter;
+		std::wstring wideEntry = converter.from_bytes(opt.entryPoint);
 
-	CComPtr<IDxcBlob> code;
-	result->GetResult(&code);
-	using data_t = decltype(hlsl.binaryData)::value_type;
-	hlsl.binaryData.assign(static_cast<data_t*>(code->GetBufferPointer()), static_cast<data_t*>(code->GetBufferPointer()) + code->GetBufferSize());
+		std::vector<LPCWSTR> arguments;
+		//-E for the entry point (eg. PSMain)
+		arguments.push_back(L"-E");
+		arguments.push_back(wideEntry.c_str());
 
-#elif defined _MSC_VER
-	LPCSTR profile = nullptr;
-	switch (model) {
+		//-T for the target profile (eg. ps_6_2)
+		arguments.push_back(L"-T");
+		arguments.push_back(profile);
+
+		//Strip reflection data and pdbs (see later)
+		arguments.push_back(L"-Qstrip_debug");
+		arguments.push_back(L"-Qstrip_reflect");
+
+		arguments.push_back(DXC_ARG_WARNINGS_ARE_ERRORS); //-WX
+		arguments.push_back(DXC_ARG_DEBUG); //-Zi
+		arguments.push_back(DXC_ARG_PACK_MATRIX_ROW_MAJOR); //-Zp
+
+		std::vector<std::wstring> defines;	// currently we have none
+		for (const std::wstring& define : defines)
+		{
+			arguments.push_back(L"-D");
+			arguments.push_back(define.c_str());
+		}
+
+		DxcBuffer sourceBuffer;
+		sourceBuffer.Ptr = pSource->GetBufferPointer();
+		sourceBuffer.Size = pSource->GetBufferSize();
+		sourceBuffer.Encoding = 0;
+
+		ComPtr<IDxcResult> pCompileResult;
+		HRESULT result = pCompiler->Compile(&sourceBuffer, arguments.data(), arguments.size(), nullptr, IID_PPV_ARGS(pCompileResult.GetAddressOf()));
+
+		//Error Handling
+		ComPtr<IDxcBlobUtf8> pErrors;
+		pCompileResult->GetOutput(DXC_OUT_ERRORS, IID_PPV_ARGS(pErrors.GetAddressOf()), nullptr);
+		if (pErrors && pErrors->GetStringLength() > 0)
+		{
+			throw runtime_error((char*)pErrors->GetBufferPointer());
+		}
+
+		// get the debug data (TODO: unused)
+		ComPtr<IDxcBlob> pDebugData;
+		ComPtr<IDxcBlobUtf16> pDebugDataPath;
+		pCompileResult->GetOutput(DXC_OUT_PDB, IID_PPV_ARGS(pDebugData.GetAddressOf()), pDebugDataPath.GetAddressOf());
+
+		// get reflection data (TODO: unused)
+		ComPtr<IDxcBlob> pReflectionData;
+		pCompileResult->GetOutput(DXC_OUT_REFLECTION, IID_PPV_ARGS(pReflectionData.GetAddressOf()), nullptr);
+		DxcBuffer reflectionBuffer;
+		reflectionBuffer.Ptr = pReflectionData->GetBufferPointer();
+		reflectionBuffer.Size = pReflectionData->GetBufferSize();
+		reflectionBuffer.Encoding = 0;
+		ComPtr<ID3D12ShaderReflection> pShaderReflection;
+		pUtils->CreateReflection(&reflectionBuffer, IID_PPV_ARGS(pShaderReflection.GetAddressOf()));
+
+		ComPtr<IDxcBlob> pShaderBinary;
+		pCompileResult->GetOutput(DXC_OUT_OBJECT, IID_PPV_ARGS(pDebugData.GetAddressOf()), nullptr);
+		hlsl.binaryData = (char*)pShaderBinary->GetBufferPointer();
+	};
+#endif
+#if defined _MSC_VER
+	auto compileWithOldDxc = [&]() {
+		LPCSTR profile = nullptr;
+		switch (model) {
 		case decltype(model)::ExecutionModelVertex:
 			profile = "vs_5_0";
 			break;
@@ -472,29 +507,39 @@ IMResult SPIRVToDXIL(const spirvbytes& bin, const Options& opt, spv::ExecutionMo
 			break;
 		default:
 			throw runtime_error("Invalid shader model");
-	}
-	ID3DBlob* code = nullptr;
-	ID3DBlob* errormsg = nullptr;
-	auto result = D3DCompile(
-		hlsl.sourceData.data(),
-		hlsl.sourceData.size(),
-		"ST_HLSL.hlsl",
-		nullptr,
-		nullptr,
-		"main",
-		profile,
-		D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION, //TODO: make this configurable, see https://docs.microsoft.com/en-us/windows/win32/direct3dhlsl/d3dcompile-constants for flags
-		0,			// see https://docs.microsoft.com/en-us/windows/win32/direct3dhlsl/d3dcompile-effect-constants for flags
-		&code,
-		&errormsg
-	);
-	if (result == S_OK) {
-		hlsl.binaryData = (char*)code->GetBufferPointer();
+		}
+		ID3DBlob* code = nullptr;
+		ID3DBlob* errormsg = nullptr;
+		auto result = D3DCompile(
+			hlsl.sourceData.data(),
+			hlsl.sourceData.size(),
+			"ST_HLSL.hlsl",
+			nullptr,
+			nullptr,
+			"main",
+			profile,
+			D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION, //TODO: make this configurable, see https://docs.microsoft.com/en-us/windows/win32/direct3dhlsl/d3dcompile-constants for flags
+			0,			// see https://docs.microsoft.com/en-us/windows/win32/direct3dhlsl/d3dcompile-effect-constants for flags
+			&code,
+			&errormsg
+		);
+		if (result == S_OK) {
+			hlsl.binaryData = (char*)code->GetBufferPointer();
+		}
+		else {
+			throw runtime_error((char*)errormsg->GetBufferPointer());
+		}
+	};
+	if (opt.version > 50) {
+#if NEW_DXC
+		compileWithNewDxc();
+#else
+		throw runtime_error("Cannot compile this version with legacy compiler");
+#endif
 	}
 	else {
-		throw runtime_error((char*)errormsg->GetBufferPointer());
+		compileWithOldDxc();
 	}
-
 #else
 	#error DXIL is not available on this platform
 #endif

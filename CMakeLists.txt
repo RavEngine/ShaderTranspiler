@@ -55,6 +55,9 @@ if(ST_BUNDLED_DXC)
     set(DXC_BUILD_ARCH "x64" CACHE INTERNAL "")     # TODO: support non-x64 host
     set(HLSL_BUILD_DXILCONV OFF CACHE INTERNAL "")
     add_subdirectory("${ST_DEPS_DIR}/DirectXShaderCompiler" EXCLUDE_FROM_ALL)
+    set(DXCLIBS "dxcompiler")
+else()
+    set(DXCLIBS "dxcompiler.lib")
 endif()
 
 # make library
@@ -100,8 +103,8 @@ else()
     target_compile_definitions("${PROJECT_NAME}" PUBLIC -DST_BUNDLED_DXC=0)
     if(MSVC)
          target_link_libraries("${PROJECT_NAME}" PRIVATE 
-            D3DCompiler.lib
             d3d11.lib
+            ${DXCLIBS}
          )
     endif()
 endif()
