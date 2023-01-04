@@ -488,7 +488,7 @@ IMResult SPIRVToDXIL(const spirvbytes& bin, const Options& opt, spv::ExecutionMo
 		pUtils->CreateReflection(&reflectionBuffer, IID_PPV_ARGS(pShaderReflection.GetAddressOf()));
 
 		ComPtr<IDxcBlob> pShaderBinary;
-		pCompileResult->GetOutput(DXC_OUT_OBJECT, IID_PPV_ARGS(pDebugData.GetAddressOf()), nullptr);
+		pCompileResult->GetOutput(DXC_OUT_OBJECT, IID_PPV_ARGS(pShaderBinary.GetAddressOf()), nullptr);
 		hlsl.binaryData = (char*)pShaderBinary->GetBufferPointer();
 	};
 #endif
