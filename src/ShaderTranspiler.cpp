@@ -10,6 +10,12 @@
 #include <iostream>
 #include <sstream>
 
+#if defined(WINAPI_FAMILY) && (WINAPI_FAMILY == WINAPI_FAMILY_APP)
+#define _UWP 1   
+#else
+#define _UWP 0
+#endif
+
 #define NEW_DXC (ST_BUNDLED_DXC || _WIN32)
 
 #if NEW_DXC
@@ -429,8 +435,15 @@ IMResult SPIRVToDXIL(const spirvbytes& bin, const Options& opt, spv::ExecutionMo
 		default:
 			throw runtime_error("Invalid shader model");
 		}
+
+#if _UWP
+		std::wstring wideEntry;
+		wideEntry.resize(opt.entryPoint.size());
+		mbstowcs_s(nullptr, wideEntry.data(), wideEntry.size(), opt.entryPoint.data(), wideEntry.size());
+#else
 		std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>> converter;
 		std::wstring wideEntry = converter.from_bytes(opt.entryPoint);
+#endif
 
 		std::vector<LPCWSTR> arguments;
 		//-E for the entry point (eg. PSMain)
