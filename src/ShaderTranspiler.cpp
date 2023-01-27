@@ -580,65 +580,25 @@ IMResult SPIRVtoMSL(const spirvbytes& bin, const Options& opt, spv::ExecutionMod
     
 	auto refldata = getReflectData(msl,bin);
     
-	if (opt.uniformBufferSettings.renameBuffer){
-		for (auto &resource : refldata.uniform_buffers)
-		{
-            spirv_cross::MSLResourceBinding newBinding;
-            newBinding.stage = model;
-			unsigned set = msl.get_decoration( resource.id, spv::DecorationDescriptorSet );
-			unsigned binding = msl.get_decoration( resource.id, spv::DecorationBinding );
-			newBinding.desc_set = set;
-			newBinding.binding = 0;
-			newBinding.msl_buffer = 0;
-			msl.add_msl_resource_binding( newBinding );
-			
-			msl.set_name(resource.id, "_mtl_u");
-		}
-	}
-	// TODO: see shaderc_metal.cpp:562 for setting resource bindings
-#if 0
-
-    for (auto &resource : refldata.storage_buffers)
-    {
-        spirv_cross::MSLResourceBinding newBinding;
-        newBinding.stage = model;
-        unsigned set = msl.get_decoration( resource.id, spv::DecorationDescriptorSet );
-        unsigned binding = msl.get_decoration( resource.id, spv::DecorationBinding );
-        newBinding.desc_set = set;
-        newBinding.binding = binding;
-        newBinding.msl_buffer = binding + 1;
-        msl.add_msl_resource_binding( newBinding );
-    }
-   
-    for (auto &resource : refldata.separate_samplers)
-    {
-        spirv_cross::MSLResourceBinding newBinding;
-        newBinding.stage = model;
-        unsigned set = msl.get_decoration( resource.id, spv::DecorationDescriptorSet );
-        unsigned binding = msl.get_decoration( resource.id, spv::DecorationBinding );
-        newBinding.desc_set = set;
-        newBinding.binding = binding;
-        newBinding.msl_texture = binding - textureBindingOffset;
-        newBinding.msl_sampler = binding - textureBindingOffset;
-        msl.add_msl_resource_binding( newBinding );
+    if (opt.uniformBufferSettings.renameBuffer){
+        if (refldata.uniform_buffers.size() > 0){
+            auto resource = refldata.uniform_buffers[0];
+            msl.set_name(resource.id, opt.uniformBufferSettings.newBufferName);
+        }
     }
     
-    for (auto &resource : refldata.storage_images)
-    {
+    uint8_t currentIndex = opt.pushConstantSettings.firstIndex;
+    for(auto& resource : refldata.push_constant_buffers){
         spirv_cross::MSLResourceBinding newBinding;
         newBinding.stage = model;
-        const std::string& name = msl.get_name(resource.id);
-
-        unsigned set = msl.get_decoration( resource.id, spv::DecorationDescriptorSet );
-        unsigned binding = msl.get_decoration( resource.id, spv::DecorationBinding );
-        newBinding.desc_set = set;
-        newBinding.binding = binding;
-        newBinding.msl_texture = binding - textureBindingOffset;
-        newBinding.msl_sampler = binding - textureBindingOffset;
+        newBinding.desc_set = spirv_cross::ResourceBindingPushConstantDescriptorSet;
+        newBinding.binding = spirv_cross::ResourceBindingPushConstantBinding;
+        newBinding.msl_buffer = currentIndex;
         msl.add_msl_resource_binding( newBinding );
+        
+        currentIndex++;
     }
     
-#endif
 	setEntryPoint(msl, opt.entryPoint);
     auto res = msl.compile();
     

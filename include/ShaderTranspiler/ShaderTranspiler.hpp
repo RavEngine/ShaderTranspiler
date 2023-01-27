@@ -117,6 +117,11 @@ struct Options{
 		std::string newBufferName;
 		bool renameBuffer = false;
 	} uniformBufferSettings;
+    
+    struct PushConstantSettings{
+        uint8_t firstIndex = 0;
+        
+    } pushConstantSettings;
 };
 
 class ShaderTranspiler{
