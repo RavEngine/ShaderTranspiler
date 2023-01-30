@@ -1,6 +1,7 @@
 #include "ShaderTranspiler.hpp"
 #include <spirv_msl.hpp>
 #import <Foundation/Foundation.h>
+#include <TargetConditionals.h>
 
 using namespace shadert;
 
@@ -11,6 +12,7 @@ struct executeProcessResult{
 	NSData *outdata, *errdata;
 };
 executeProcessResult executeProcess(NSString* launchPath, NSArray<NSString*>* arguments, NSData* stdinData){
+#if !TARGET_OS_IPHONE
 	// create task and pipes
 	NSTask* task = [NSTask new];
 	NSPipe* taskStdin = [NSPipe new];
@@ -46,9 +48,13 @@ executeProcessResult executeProcess(NSString* launchPath, NSArray<NSString*>* ar
 		code,
 		outdata, errdata
 	};
+#else
+    throw std::runtime_error("executeProcess is not available");
+#endif
 }
 
 IMResult SPIRVtoMBL(const spirvbytes& bin, const Options& opt, spv::ExecutionModel model){
+#if !TARGET_OS_IPHONE
 	// first make metal source shader
 	auto MSLResult = SPIRVtoMSL(bin, opt, model);
 	
@@ -84,4 +90,7 @@ IMResult SPIRVtoMBL(const spirvbytes& bin, const Options& opt, spv::ExecutionMod
 	else{
 		throw std::runtime_error((const char*)airResult.errdata.bytes);
 	}
+#else
+    throw std::runtime_error("SPIRVtoMBL is not available");
+#endif
 }
