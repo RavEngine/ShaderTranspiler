@@ -455,12 +455,12 @@ IMResult SPIRVToDXIL(const spirvbytes& bin, const Options& opt, spv::ExecutionMo
 		arguments.push_back(profile);
 
 		//Strip reflection data and pdbs (see later)
-		arguments.push_back(L"-Qstrip_debug");
-		arguments.push_back(L"-Qstrip_reflect");
+		//arguments.push_back(L"-Qstrip_debug");
+		//arguments.push_back(L"-Qstrip_reflect");
 
-		arguments.push_back(DXC_ARG_WARNINGS_ARE_ERRORS); //-WX
+		//arguments.push_back(DXC_ARG_WARNINGS_ARE_ERRORS); //-WX
 		arguments.push_back(DXC_ARG_DEBUG); //-Zi
-		arguments.push_back(DXC_ARG_PACK_MATRIX_ROW_MAJOR); //-Zp
+		//arguments.push_back(DXC_ARG_PACK_MATRIX_ROW_MAJOR); //-Zp
 
 		std::vector<std::wstring> defines;	// currently we have none
 		for (const std::wstring& define : defines)
@@ -502,7 +502,8 @@ IMResult SPIRVToDXIL(const spirvbytes& bin, const Options& opt, spv::ExecutionMo
 
 		ComPtr<IDxcBlob> pShaderBinary;
 		pCompileResult->GetOutput(DXC_OUT_OBJECT, IID_PPV_ARGS(pShaderBinary.GetAddressOf()), nullptr);
-		hlsl.binaryData = (char*)pShaderBinary->GetBufferPointer();
+		const auto binarySize = pShaderBinary->GetBufferSize();
+		hlsl.binaryData = decltype(hlsl.binaryData){(char*)pShaderBinary->GetBufferPointer(), binarySize};
 	};
 #endif
 #if defined _MSC_VER
@@ -537,7 +538,7 @@ IMResult SPIRVToDXIL(const spirvbytes& bin, const Options& opt, spv::ExecutionMo
 			&errormsg
 		);
 		if (result == S_OK) {
-			hlsl.binaryData = (char*)code->GetBufferPointer();
+			hlsl.binaryData = decltype(hlsl.binaryData){(char*)code->GetBufferPointer(), code->GetBufferSize()};
 		}
 		else {
 			throw runtime_error((char*)errormsg->GetBufferPointer());
