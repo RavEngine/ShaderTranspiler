@@ -9,6 +9,8 @@
 #include <spirv_reflect.h>
 #include <iostream>
 #include <sstream>
+#include <tint/tint.h>
+#include <atomic>
 
 #if defined(WINAPI_FAMILY) && (WINAPI_FAMILY == WINAPI_FAMILY_APP)
 #define _UWP 1   
@@ -41,7 +43,9 @@ using namespace std;
 using namespace std::filesystem;
 using namespace shadert;
 
-static bool glslAngInitialized = false;
+static std::atomic<bool> glslAngInitialized = false;
+static std::atomic<bool> tintInit = false;
+static std::mutex tintInitMtx;
 
 ReflectData::Resource::Resource(const spirv_cross::Resource& other) : id(other.id), type_id(other.type_id), base_type_id(other.base_type_id), name(std::move(other.name)){}
 
@@ -484,7 +488,8 @@ IMResult SPIRVToDXIL(const spirvbytes& bin, const Options& opt, spv::ExecutionMo
 		pCompileResult->GetOutput(DXC_OUT_ERRORS, IID_PPV_ARGS(pErrors.GetAddressOf()), nullptr);
 		if (pErrors && pErrors->GetStringLength() > 0)
 		{
-			throw runtime_error((char*)pErrors->GetBufferPointer());
+			auto msg = (char*)pErrors->GetBufferPointer();
+			throw runtime_error(msg);
 		}
 
 		// get the debug data (TODO: unused)
@@ -607,6 +612,28 @@ IMResult SPIRVtoMSL(const spirvbytes& bin, const Options& opt, spv::ExecutionMod
     
 	return {std::move(res), "", std::move(refldata)};
 }
+
+IMResult SPIRVToWGSL(const spirvbytes& bin, const Options& opt, spv::ExecutionModel model) {
+	tintInitMtx.lock();
+	if (!tintInit) {
+		tint::Initialize();
+		tintInit = true;
+	}
+	tintInitMtx.unlock();
+
+	auto tintprogram = tint::reader::spirv::Parse(bin, {});
+	if (tintprogram.Diagnostics().contains_errors()) {
+		throw runtime_error(tintprogram.Diagnostics().str());
+	}
+
+	auto result = tint::writer::wgsl::Generate(&tintprogram, {});
+	if (!result.success) {
+		throw runtime_error(result.error);
+	}
+
+	return { result.wgsl, "", {} };
+}
+
 #if __APPLE__
 extern IMResult SPIRVtoMBL(const spirvbytes& bin, const Options& opt, spv::ExecutionModel model);
 #endif
@@ -743,6 +770,9 @@ static CompileResult CompileSpirVTo(const spirvbytes& spirv, TargetAPI api, cons
 		return CompileResult{SPIRVtoMBL(spirv,opt,types.model)};
 		break;
 #endif
+	case TargetAPI::WGSL:
+		return CompileResult{ SPIRVToWGSL(spirv,opt,types.model) };
+		break;
 	default:
 		throw runtime_error("Unsupported API");
 		break;
@@ -768,4 +798,9 @@ CompileResult ShaderTranspiler::CompileTo(const MemoryCompileTask& task, TargetA
 	compres.data.uniformData = std::move(spirv.uniforms);
 	compres.data.attributeData = std::move(spirv.attributes);
 	return compres;
+}
+
+shadert::ShaderTranspiler::~ShaderTranspiler()
+{
+	
 }

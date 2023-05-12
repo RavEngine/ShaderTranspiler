@@ -29,11 +29,10 @@ int main(){
 	
 	try{
 		//call CompileTo and pass the CompileTask and the Options
-		CompileResult result = s.CompileTo(task, TargetAPI::Metal, opt);
+		CompileResult result = s.CompileTo(task, TargetAPI::WGSL, opt);
 		
-		//the shader data is stored in the data field
-		cout << (result.isBinary? "Binary" : "Plain text") << "shader created, source = " << endl;
-		cout << result.data << endl;
+		//the shader data is stored in the sourceData or binaryData fields
+		cout << result.data.sourceData << endl;
 	}
 	catch(exception& e){
 		//library will throw on errors

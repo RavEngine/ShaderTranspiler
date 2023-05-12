@@ -29,6 +29,7 @@ enum class TargetAPI{
 	OpenGL,
 	Vulkan,
 	HLSL,
+	WGSL,
 #ifdef ST_DXIL_ENABLED
 	DXIL,
 #endif
@@ -141,5 +142,7 @@ public:
 	 @return A CompileResult representing the result of the compile.
 	 */
 	CompileResult CompileTo(const MemoryCompileTask& task, const TargetAPI platform, const Options& options);
+
+	~ShaderTranspiler();
 };
 }
