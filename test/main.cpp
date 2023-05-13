@@ -25,7 +25,7 @@ int main(){
 	//configure the compile with an Options object
 	Options opt;
 	opt.mobile = false; //used for OpenGL ES or Metal iOS
-	opt.version = 23;   //stores the major and minor version, for Vulkan 1.5 use 15
+	opt.version = 13;   //stores the major and minor version, for Vulkan 1.5 use 15
 	
 	try{
 		//call CompileTo and pass the CompileTask and the Options

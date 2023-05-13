@@ -268,7 +268,7 @@ const CompileGLSLResult CompileGLSL(const std::string_view& source, const EShLan
 
 	int ClientInputSemanticsVersion = DefaultVersion;
 	glslang::EShTargetClientVersion VulkanClientVersion = glslang::EShTargetVulkan_1_2;
-	glslang::EShTargetLanguageVersion TargetVersion = glslang::EShTargetSpv_1_5;
+	glslang::EShTargetLanguageVersion TargetVersion = glslang::EShTargetSpv_1_3;
 
 	shader.setEnvInput(glslang::EShSourceGlsl, ShaderType, glslang::EShClientVulkan, ClientInputSemanticsVersion);
 	shader.setEnvClient(glslang::EShClientVulkan, VulkanClientVersion);
@@ -621,7 +621,9 @@ IMResult SPIRVToWGSL(const spirvbytes& bin, const Options& opt, spv::ExecutionMo
 	}
 	tintInitMtx.unlock();
 
-	auto tintprogram = tint::reader::spirv::Parse(bin, {});
+	auto tintprogram = tint::reader::spirv::Parse(bin, {
+		.allow_non_uniform_derivatives = true	
+	});
 	if (tintprogram.Diagnostics().contains_errors()) {
 		throw runtime_error(tintprogram.Diagnostics().str());
 	}

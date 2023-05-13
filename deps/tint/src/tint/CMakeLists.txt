@@ -809,7 +809,7 @@ target_link_libraries(tint_val tint_utils_io)
 ## Tint library
 add_library(libtint ${TINT_LIB_SRCS})
 tint_default_compile_options(libtint)
-target_link_libraries(libtint tint_diagnostic_utils absl_strings)
+target_link_libraries(libtint tint_diagnostic_utils)
 set_target_properties(libtint PROPERTIES OUTPUT_NAME "tint")
 
 if (${TINT_BUILD_FUZZERS})
