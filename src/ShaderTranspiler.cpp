@@ -242,7 +242,7 @@ struct CompileGLSLResult {
 
 constexpr int textureBindingOffset = 16;
 
-const CompileGLSLResult CompileGLSL(const std::string_view& source, const EShLanguage ShaderType, const std::vector<std::filesystem::path>& includePaths) {
+const CompileGLSLResult CompileGLSL(const std::string_view& source, const EShLanguage ShaderType, const std::vector<std::filesystem::path>& includePaths, bool debug) {
 	//initialize. Do only once per process!
 	if (!glslAngInitialized)
 	{
@@ -322,7 +322,7 @@ const CompileGLSLResult CompileGLSL(const std::string_view& source, const EShLan
 
 	spv::SpvBuildLogger logger;
 	glslang::SpvOptions spvOptions;
-	spvOptions.generateDebugInfo = true;
+	spvOptions.generateDebugInfo = debug;
 	glslang::GlslangToSpv(*program.getIntermediate(ShaderType), result.spirvdata, &logger, &spvOptions);
 
 	// get uniform information
@@ -352,7 +352,7 @@ const CompileGLSLResult CompileGLSL(const std::string_view& source, const EShLan
  @param filename the file to compile
  @param ShaderType the type of shader to compile
  */
-const CompileGLSLResult CompileGLSLFromFile(const FileCompileTask& task, const EShLanguage ShaderType){
+const CompileGLSLResult CompileGLSLFromFile(const FileCompileTask& task, const EShLanguage ShaderType, bool debug){
 	
 	
 	//Load GLSL into a string
@@ -369,7 +369,7 @@ const CompileGLSLResult CompileGLSLFromFile(const FileCompileTask& task, const E
 	// add current directory
 	std::vector<std::filesystem::path> pathsWithParent(std::move(task.includePaths));
 	pathsWithParent.push_back(task.filename.parent_path());
-	return CompileGLSL(InputGLSL, ShaderType, pathsWithParent);
+	return CompileGLSL(InputGLSL, ShaderType, pathsWithParent, debug);
 }
 
 /**
@@ -465,7 +465,9 @@ IMResult SPIRVToDXIL(const spirvbytes& bin, const Options& opt, spv::ExecutionMo
 		//arguments.push_back(L"-Qstrip_reflect");
 
 		//arguments.push_back(DXC_ARG_WARNINGS_ARE_ERRORS); //-WX
-		arguments.push_back(DXC_ARG_DEBUG); //-Zi
+		if (opt.debug) {
+			arguments.push_back(DXC_ARG_DEBUG); //-Zi
+		}
 		//arguments.push_back(DXC_ARG_PACK_MATRIX_ROW_MAJOR); //-Zp
 
 		std::vector<std::wstring> defines;	// currently we have none
@@ -699,6 +701,7 @@ spirvbytes OptimizeSPIRV(const spirvbytes& bin, const Options &options){
 	spvtools::Optimizer optimizer(target);
 	optimizer.RegisterSizePasses();
 	optimizer.RegisterPerformancePasses();
+	optimizer.RegisterLegalizationPasses();
 	optimizer.SetMessageConsumer(consumer);
 	
 	spirvbytes newbin;
@@ -754,7 +757,14 @@ static CompileResult CompileSpirVTo(const spirvbytes& spirv, TargetAPI api, cons
 		return CompileResult{ SPIRVToOpenGL(spirv,opt,types.model) };
 		break;
 	case TargetAPI::Vulkan:
-		return SerializeSPIRV(OptimizeSPIRV(spirv, opt));
+		if (opt.debug) {
+			// don't optimize it
+			return SerializeSPIRV(spirv);
+		}
+		else {
+			return SerializeSPIRV(OptimizeSPIRV(spirv, opt));
+		}
+		
 		break;
 	case TargetAPI::HLSL:
 		return CompileResult{ SPIRVToHLSL(spirv,opt,types.model) };
@@ -786,7 +796,7 @@ CompileResult ShaderTranspiler::CompileTo(const FileCompileTask& task, TargetAPI
 	auto types = ShaderStageToInternal(task.stage);
 
 	//generate spirv
-	auto spirv = CompileGLSLFromFile(task, types.type);
+	auto spirv = CompileGLSLFromFile(task, types.type, opt.debug);
 	auto compres = CompileSpirVTo(spirv.spirvdata, api, opt, types);
 	compres.data.uniformData = std::move(spirv.uniforms);
 	compres.data.attributeData = std::move(spirv.attributes);
@@ -795,7 +805,7 @@ CompileResult ShaderTranspiler::CompileTo(const FileCompileTask& task, TargetAPI
 
 CompileResult ShaderTranspiler::CompileTo(const MemoryCompileTask& task, TargetAPI api, const Options& opt) {
 	auto types = ShaderStageToInternal(task.stage);
-	auto spirv = CompileGLSL(task.source, types.type, task.includePaths);
+	auto spirv = CompileGLSL(task.source, types.type, task.includePaths, opt.debug);
 	auto compres = CompileSpirVTo(spirv.spirvdata, api, opt, types);
 	compres.data.uniformData = std::move(spirv.uniforms);
 	compres.data.attributeData = std::move(spirv.attributes);

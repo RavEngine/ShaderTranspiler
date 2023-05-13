@@ -113,6 +113,7 @@ struct CompileResult{
 struct Options{
 	uint32_t version;
 	bool mobile;
+	bool debug = false;
 	std::string entryPoint = "frag";
 	struct UniformBufferSettings{
 		std::string newBufferName;
