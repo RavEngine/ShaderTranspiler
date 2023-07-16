@@ -18,6 +18,10 @@
 #define _UWP 0
 #endif
 
+#if (ST_BUNDLED_DXC == 1 || defined _MSC_VER && !_UWP) && !_UWP
+#define ST_DXIL_ENABLED
+#endif
+
 #define NEW_DXC (ST_BUNDLED_DXC || _WIN32)
 
 #if NEW_DXC
@@ -242,7 +246,7 @@ struct CompileGLSLResult {
 
 constexpr int textureBindingOffset = 16;
 
-const CompileGLSLResult CompileGLSL(const std::string_view& source, const EShLanguage ShaderType, const std::vector<std::filesystem::path>& includePaths, bool debug) {
+const CompileGLSLResult CompileGLSL(const std::string_view& source, const EShLanguage ShaderType, const std::vector<std::filesystem::path>& includePaths, bool debug, bool performWebGPUModifications = false) {
 	//initialize. Do only once per process!
 	if (!glslAngInitialized)
 	{
@@ -262,6 +266,44 @@ const CompileGLSLResult CompileGLSL(const std::string_view& source, const EShLan
 	shader.setShiftBinding(glslang::EResSampler, textureBindingOffset);
 	shader.setShiftBinding(glslang::EResImage, textureBindingOffset);
     shader.setEnvInputVulkanRulesRelaxed(); // use GL_EXT_vulkan_glsl_relaxed TODO: make this configurable
+    
+    // remap push constants to uniform buffer
+	if (performWebGPUModifications) {
+        auto remapper = [&](){
+            // awful string parsing to find the name of the Uniform block
+            auto pushconstant_loc = source.find("push_constant");
+            if (pushconstant_loc == std::string::npos){
+                return;
+            }
+            auto uniform_loc = source.find("uniform",pushconstant_loc);
+            if (uniform_loc == std::string::npos){
+                return;
+            }
+            
+            auto brace_loc = source.find("{", uniform_loc);
+            if (brace_loc == std::string::npos){
+                return;
+            }
+            auto substr_begin = uniform_loc + sizeof("uniform")-1;
+            auto substr_size = brace_loc - (uniform_loc + sizeof("uniform")-1);
+            // 'trim' adjust ranges
+            for( ; substr_begin < brace_loc && std::isspace(source[substr_begin]); substr_begin++){
+                substr_size --;
+            }
+            for( ; substr_size > 0 && std::isspace(source[substr_begin + substr_size]); substr_size--){}
+            
+            auto blockname = source.substr(substr_begin, substr_size);
+            
+            std::string globalUniformBlockName(blockname);
+            
+            
+            shader.addBlockStorageOverride(globalUniformBlockName.c_str(), glslang::TBlockStorageClass::EbsStorageBuffer);
+        };
+        remapper();
+        
+        // WGSL
+    }
+
 
 	//=========== vulkan versioning (should alow this to be passed in, or find out from the system) ========
 	const int DefaultVersion = 460;
@@ -323,7 +365,11 @@ const CompileGLSLResult CompileGLSL(const std::string_view& source, const EShLan
 	spv::SpvBuildLogger logger;
 	glslang::SpvOptions spvOptions;
 	spvOptions.generateDebugInfo = debug;
-	glslang::GlslangToSpv(*program.getIntermediate(ShaderType), result.spirvdata, &logger, &spvOptions);
+	spvOptions.disableOptimizer = debug;
+	spvOptions.stripDebugInfo = !debug;
+    auto& intermediate = *program.getIntermediate(ShaderType);
+    
+	glslang::GlslangToSpv(intermediate, result.spirvdata, &logger, &spvOptions);
 
 	// get uniform information
 	program.buildReflection();
@@ -352,7 +398,7 @@ const CompileGLSLResult CompileGLSL(const std::string_view& source, const EShLan
  @param filename the file to compile
  @param ShaderType the type of shader to compile
  */
-const CompileGLSLResult CompileGLSLFromFile(const FileCompileTask& task, const EShLanguage ShaderType, bool debug){
+const CompileGLSLResult CompileGLSLFromFile(const FileCompileTask& task, const EShLanguage ShaderType, bool debug, bool noPushConstants){
 	
 	
 	//Load GLSL into a string
@@ -369,7 +415,7 @@ const CompileGLSLResult CompileGLSLFromFile(const FileCompileTask& task, const E
 	// add current directory
 	std::vector<std::filesystem::path> pathsWithParent(std::move(task.includePaths));
 	pathsWithParent.push_back(task.filename.parent_path());
-	return CompileGLSL(InputGLSL, ShaderType, pathsWithParent, debug);
+	return CompileGLSL(InputGLSL, ShaderType, pathsWithParent, debug, noPushConstants);
 }
 
 /**
@@ -412,10 +458,10 @@ IMResult SPIRVToHLSL(const spirvbytes& bin, const Options& opt, spv::ExecutionMo
 	return {hlsl.compile(), "", getReflectData(hlsl,bin)};
 }
 
-#ifdef ST_DXIL_ENABLED
+
 IMResult SPIRVToDXIL(const spirvbytes& bin, const Options& opt, spv::ExecutionModel model){
 	auto hlsl = SPIRVToHLSL(bin,opt,model);
-	
+#ifdef ST_DXIL_ENABLED
 #if NEW_DXC
 
 	auto compileWithNewDxc = [&] {
@@ -566,10 +612,13 @@ IMResult SPIRVToDXIL(const spirvbytes& bin, const Options& opt, spv::ExecutionMo
 #else
 	#error DXIL is not available on this platform
 #endif
-	
-	return hlsl;
-}
+#else
+	throw std::runtime_error("DXIL generation is not supported on this platform");
 #endif
+
+	return hlsl;
+
+}
 
 /**
  Decompile SPIR-V to Metal shader
@@ -796,7 +845,8 @@ CompileResult ShaderTranspiler::CompileTo(const FileCompileTask& task, TargetAPI
 	auto types = ShaderStageToInternal(task.stage);
 
 	//generate spirv
-	auto spirv = CompileGLSLFromFile(task, types.type, opt.debug);
+	bool noPushConstants = api == TargetAPI::WGSL;
+	auto spirv = CompileGLSLFromFile(task, types.type, opt.debug, noPushConstants);
 	auto compres = CompileSpirVTo(spirv.spirvdata, api, opt, types);
 	compres.data.uniformData = std::move(spirv.uniforms);
 	compres.data.attributeData = std::move(spirv.attributes);
@@ -804,8 +854,9 @@ CompileResult ShaderTranspiler::CompileTo(const FileCompileTask& task, TargetAPI
 }
 
 CompileResult ShaderTranspiler::CompileTo(const MemoryCompileTask& task, TargetAPI api, const Options& opt) {
+	bool noPushConstants = api == TargetAPI::WGSL;
 	auto types = ShaderStageToInternal(task.stage);
-	auto spirv = CompileGLSL(task.source, types.type, task.includePaths, opt.debug);
+	auto spirv = CompileGLSL(task.source, types.type, task.includePaths, opt.debug, noPushConstants);
 	auto compres = CompileSpirVTo(spirv.spirvdata, api, opt, types);
 	compres.data.uniformData = std::move(spirv.uniforms);
 	compres.data.attributeData = std::move(spirv.attributes);
