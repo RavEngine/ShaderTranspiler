@@ -689,12 +689,12 @@ IMResult SPIRVToWGSL(const spirvbytes& bin, const Options& opt, spv::ExecutionMo
 
 	auto result = tint::writer::wgsl::Generate(&tintprogram, {});
 	if (!result.success) {
-		throw runtime_error(result.error);
+		throw std::runtime_error(result.error);
 	}
 
 	return { result.wgsl, "", {} };
 #else
-	throw std::runtime_error("RGLC was not compiled with WGSL output support");
+	throw std::runtime_error("ShaderTranspiler was not compiled with WGSL output support");
 #endif
 }
 

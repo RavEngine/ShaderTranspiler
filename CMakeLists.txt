@@ -1,10 +1,10 @@
 cmake_minimum_required(VERSION 3.17)
 set(CMAKE_XCODE_GENERATE_SCHEME OFF CACHE INTERNAL "")
 
+PROJECT(ShaderTranspiler)
 option(ST_ENABLE_TEST "Enable tests" ON)
 option(ST_BUNDLED_DXC "Use the bundled DirectXShaderCompiler (required for cross-platform DXIL" OFF)
 option(ST_ENABLE_WGSL "Enable WGSL output" OFF)
-PROJECT(ShaderTranspiler)
 
 SET(ST_DEPS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/deps")
 
@@ -108,7 +108,9 @@ add_library("${PROJECT_NAME}" ${SOURCES} ${APPLEFILES})
 target_compile_features("${PROJECT_NAME}" PRIVATE cxx_std_20)
 set_target_properties("${PROJECT_NAME}" PROPERTIES XCODE_GENERATE_SCHEME ON)
 if (ST_ENABLE_WGSL)
-    target_compile_definitions(${PROJECT_NAME} PRIVATE "ST_ENABLE_WGSL=1")
+    target_compile_definitions("${PROJECT_NAME}" PRIVATE "ST_ENABLE_WGSL=1")
+else()
+    target_compile_definitions("${PROJECT_NAME}" PRIVATE "ST_ENABLE_WGSL=0")
 endif()
 
 target_include_directories("${PROJECT_NAME}" PRIVATE 
