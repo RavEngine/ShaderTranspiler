@@ -374,6 +374,10 @@ const CompileGLSLResult CompileGLSL(const std::string_view& source, const EShLan
 	spvOptions.generateDebugInfo = debug;
 	spvOptions.disableOptimizer = debug;
 	spvOptions.stripDebugInfo = !debug;
+	if (debug) {
+		spvOptions.emitNonSemanticShaderDebugInfo = true;
+		spvOptions.emitNonSemanticShaderDebugSource = true;
+	}
     auto& intermediate = *program.getIntermediate(ShaderType);
     
 	glslang::GlslangToSpv(intermediate, result.spirvdata, &logger, &spvOptions);
