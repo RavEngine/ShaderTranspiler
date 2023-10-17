@@ -304,7 +304,7 @@ const CompileGLSLResult CompileGLSL(const std::string_view& source, const EShLan
             std::string globalUniformBlockName(blockname);
             
             
-            shader.addBlockStorageOverride(globalUniformBlockName.c_str(), glslang::TBlockStorageClass::EbsStorageBuffer);
+            shader.addBlockStorageOverride(globalUniformBlockName.c_str(), glslang::TBlockStorageClass::EbsUniform);
         };
         remapper();
         
