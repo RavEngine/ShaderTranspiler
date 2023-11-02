@@ -304,7 +304,7 @@ const CompileGLSLResult CompileGLSL(const std::string_view& source, const EShLan
             std::string globalUniformBlockName(blockname);
             
             
-            shader.addBlockStorageOverride(globalUniformBlockName.c_str(), glslang::TBlockStorageClass::EbsStorageBuffer);
+            shader.addBlockStorageOverride(globalUniformBlockName.c_str(), glslang::TBlockStorageClass::EbsUniform);
         };
         remapper();
         
@@ -374,6 +374,10 @@ const CompileGLSLResult CompileGLSL(const std::string_view& source, const EShLan
 	spvOptions.generateDebugInfo = debug;
 	spvOptions.disableOptimizer = debug;
 	spvOptions.stripDebugInfo = !debug;
+	if (debug) {
+		spvOptions.emitNonSemanticShaderDebugInfo = true;
+		spvOptions.emitNonSemanticShaderDebugSource = true;
+	}
     auto& intermediate = *program.getIntermediate(ShaderType);
     
 	glslang::GlslangToSpv(intermediate, result.spirvdata, &logger, &spvOptions);
@@ -689,12 +693,12 @@ IMResult SPIRVToWGSL(const spirvbytes& bin, const Options& opt, spv::ExecutionMo
 
 	auto result = tint::writer::wgsl::Generate(&tintprogram, {});
 	if (!result.success) {
-		throw runtime_error(result.error);
+		throw std::runtime_error(result.error);
 	}
 
 	return { result.wgsl, "", {} };
 #else
-	throw std::runtime_error("RGLC was not compiled with WGSL output support");
+	throw std::runtime_error("ShaderTranspiler was not compiled with WGSL output support");
 #endif
 }
 
