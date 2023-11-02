@@ -84,7 +84,9 @@ static ReflectData getReflectData(const spirv_cross::Compiler& comp, const spirv
 	const auto sortfn = [](const auto& spvreflvars, auto& inoutscontainer){
 		std::unordered_map<std::string_view, uint16_t> varToPos;
 		for(const auto& var : spvreflvars){
-			varToPos[var->name] = var->location;
+			if (var->name != nullptr) {
+				varToPos[var->name] = var->location;
+			}
 		}
 		
 		std::sort(inoutscontainer.begin(), inoutscontainer.end(), [&](const auto& a, const auto& b){
