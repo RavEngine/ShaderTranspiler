@@ -9,6 +9,7 @@
 #include <spirv_reflect.h>
 #include <iostream>
 #include <sstream>
+#include <mutex>
 #if ST_ENABLE_WGSL
 #include <tint/tint.h>
 #endif
