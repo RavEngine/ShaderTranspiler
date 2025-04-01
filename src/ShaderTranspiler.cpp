@@ -9,19 +9,14 @@
 #include <spirv_reflect.h>
 #include <iostream>
 #include <sstream>
+#include <utility>
 #if ST_ENABLE_WGSL
 #include <tint/tint.h>
 #endif
 #include <atomic>
 #include <mutex>
 
-#if defined(WINAPI_FAMILY) && (WINAPI_FAMILY == WINAPI_FAMILY_APP)
-#define _UWP 1   
-#else
-#define _UWP 0
-#endif
-
-#if (ST_BUNDLED_DXC == 1 || defined _MSC_VER && !_UWP) && !_UWP
+#if (ST_BUNDLED_DXC == 1 || defined _MSC_VER)
 #define ST_DXIL_ENABLED
 #endif
 
@@ -79,7 +74,7 @@ static ReflectData getReflectData(const spirv_cross::Compiler& comp, const spirv
 	SpvReflectShaderModule spvModule;
 	SpvReflectResult result = spvReflectCreateShaderModule(spirvdata.size() * sizeof(spirvdata[0]), spirvdata.data(), &spvModule);
 	if (result != SPV_REFLECT_RESULT_SUCCESS){
-		throw runtime_error("SPIRV reflection capture failed");
+		throw runtime_error(std::string("SPIRV reflection capture failed: ") + std::to_string(result));
 	}
 	
 	const auto sortfn = [](const auto& spvreflvars, auto& inoutscontainer){
@@ -249,9 +244,7 @@ struct CompileGLSLResult {
 	std::vector<LiveAttribute> attributes;
 };
 
-constexpr int textureBindingOffset = 16;
-
-const CompileGLSLResult CompileGLSL(const std::string_view& source, const EShLanguage ShaderType, const std::vector<std::filesystem::path>& includePaths, bool debug, bool enableInclude, std::string preamble = "", bool performWebGPUModifications = false) {
+const CompileGLSLResult CompileGLSL(const std::string_view& source, const std::string_view& sourceFileName, const EShLanguage ShaderType, const std::vector<std::filesystem::path>& includePaths, bool debug, bool enableInclude, std::string preamble = "", bool performWebGPUModifications = false) {
 	//initialize. Do only once per process!
 	if (!glslAngInitialized)
 	{
@@ -262,20 +255,26 @@ const CompileGLSLResult CompileGLSL(const std::string_view& source, const EShLan
 	//determine the stage
 	glslang::TShader shader(ShaderType);
 
-	std::vector<const char*> strings;
 	if (enableInclude) {
 		preamble += "\n#extension GL_GOOGLE_include_directive : enable\n#extension GL_EXT_scalar_block_layout : enable\n";
 	}
 
-	strings.push_back(source.data());
+	const char* strings[] = {
+		source.data()
+	};
+
+	int lengths[] = {
+		int(source.size())
+	};
+
+	const char* names[] = {
+		sourceFileName.data()
+	};
 
 	//set the associated strings
-	shader.setStrings(strings.data(), strings.size());
-	shader.setAutoMapBindings(true);
-	shader.setShiftBinding(glslang::EResTexture, textureBindingOffset);
-	shader.setShiftBinding(glslang::EResSampler, textureBindingOffset);
-	shader.setShiftBinding(glslang::EResImage, textureBindingOffset);
-    shader.setEnvInputVulkanRulesRelaxed(); // use GL_EXT_vulkan_glsl_relaxed TODO: make this configurable
+	//shader.setStrings(strings.data(), strings.size());
+	shader.addSourceText(source.data(), source.size());
+	shader.setStringsWithLengthsAndNames(strings, lengths, names,std::size(strings));
     
     // remap push constants to uniform buffer
 	if (performWebGPUModifications) {
@@ -316,11 +315,10 @@ const CompileGLSLResult CompileGLSL(const std::string_view& source, const EShLan
 
 
 	//=========== vulkan versioning (should alow this to be passed in, or find out from the system) ========
-	const int DefaultVersion = 460;
-
-	int ClientInputSemanticsVersion = DefaultVersion;
-	glslang::EShTargetClientVersion VulkanClientVersion = glslang::EShTargetVulkan_1_3;
-	glslang::EShTargetLanguageVersion TargetVersion = glslang::EShTargetSpv_1_6;
+    
+	constexpr int ClientInputSemanticsVersion = 460;
+	constexpr glslang::EShTargetClientVersion VulkanClientVersion = glslang::EShTargetVulkan_1_3;
+    constexpr glslang::EShTargetLanguageVersion TargetVersion = glslang::EShTargetSpv_1_6;
 
 	shader.setEnvInput(glslang::EShSourceGlsl, ShaderType, glslang::EShClientVulkan, ClientInputSemanticsVersion);
 	shader.setEnvClient(glslang::EShClientVulkan, VulkanClientVersion);
@@ -339,23 +337,10 @@ const CompileGLSLResult CompileGLSL(const std::string_view& source, const EShLan
 		Includer.pushExternalLocalDirectory(path.string());
 	}
 
-    shader.setPreamble(preamble.c_str());
-	std::string PreprocessedGLSL;
-
-	if (!shader.preprocess(&Resources, DefaultVersion, ENoProfile, false, false, messages, &PreprocessedGLSL, Includer))
-	{
-		string msg = string("GLSL Preprocessing failed: ") + shader.getInfoLog() + "\n" + shader.getInfoDebugLog();
-		throw std::runtime_error(msg);
-	}
-
-	// update the stored strings (is the original set necessary?)
-	const char* PreprocessedCStr = PreprocessedGLSL.c_str();
-    
-	shader.setStrings(&PreprocessedCStr, 1);
+	shader.setPreamble(preamble.c_str());
 
 	// ================ now parse the shader ================
-	if (!shader.parse(&Resources, DefaultVersion, false, messages))
-	{
+	if (!shader.parse(&Resources, ClientInputSemanticsVersion, ECoreProfile, false, false, messages, Includer)){
 		string msg = string("GLSL Parsing failed: ") + shader.getInfoLog() + "\n" + shader.getInfoDebugLog();
 		throw std::runtime_error(msg);
 	}
@@ -380,8 +365,8 @@ const CompileGLSLResult CompileGLSL(const std::string_view& source, const EShLan
 	spvOptions.disableOptimizer = debug;
 	spvOptions.stripDebugInfo = !debug;
 	if (debug) {
-		spvOptions.emitNonSemanticShaderDebugInfo = true;
-		spvOptions.emitNonSemanticShaderDebugSource = true;
+		spvOptions.emitNonSemanticShaderDebugInfo = false;		// having these on breaks renderdoc debugging
+		spvOptions.emitNonSemanticShaderDebugSource = false;
 	}
     auto& intermediate = *program.getIntermediate(ShaderType);
     
@@ -438,7 +423,7 @@ const CompileGLSLResult CompileGLSLFromFile(const FileCompileTask& task, const E
 	// add current directory
 	std::vector<std::filesystem::path> pathsWithParent(std::move(task.includePaths));
 	pathsWithParent.push_back(task.filename.parent_path());
-	return CompileGLSL(InputGLSL, ShaderType, pathsWithParent, debug, enableInclude, preamble, noPushConstants);
+	return CompileGLSL(InputGLSL, task.filename.string(), ShaderType, pathsWithParent, debug, enableInclude, preamble, noPushConstants);
 }
 
 /**
@@ -474,6 +459,7 @@ IMResult SPIRVToHLSL(const spirvbytes& bin, const Options& opt, spv::ExecutionMo
 	spirv_cross::CompilerHLSL::Options options;
 	options.shader_model = opt.version;
 	options.point_size_compat = true;
+	options.enable_16bit_types = true;
 	hlsl.set_hlsl_options(options);
 
 	setEntryPoint(hlsl, opt.entryPoint);
@@ -511,14 +497,8 @@ IMResult SPIRVToDXIL(const spirvbytes& bin, const Options& opt, spv::ExecutionMo
 			throw runtime_error("Invalid shader model");
 		}
 
-#if _UWP
-		std::wstring wideEntry;
-		wideEntry.resize(opt.entryPoint.size());
-		mbstowcs_s(nullptr, wideEntry.data(), wideEntry.size(), opt.entryPoint.data(), wideEntry.size());
-#else
 		std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>> converter;
 		std::wstring wideEntry = converter.from_bytes(opt.entryPoint);
-#endif
 
 		std::vector<LPCWSTR> arguments;
 		//-E for the entry point (eg. PSMain)
@@ -662,6 +642,16 @@ IMResult SPIRVtoMSL(const spirvbytes& bin, const Options& opt, spv::ExecutionMod
     options.argument_buffers_tier = spirv_cross::CompilerMSL::Options::ArgumentBuffersTier::Tier2;
 	msl.set_msl_options(options);
     
+    constexpr auto rgl2sc = [](Options::BindlessSettings::Type type) -> spirv_cross::SPIRType::BaseType{
+        switch(type){
+            case decltype(type)::SampledImage: return spirv_cross::SPIRType::SampledImage;
+            case decltype(type)::Buffer: return spirv_cross::SPIRType::Unknown;
+            default:
+                throw std::runtime_error("rgl2sc: invalid type");
+                //std::unreachable();
+        }
+    };
+    
     // bindless stuff
     for(const auto& setting : opt.mtlDeviceAddressSettings){
         //msl.set_argument_buffer_device_address_space(setting.descSet, setting.deviceStorage);
@@ -669,12 +659,30 @@ IMResult SPIRVtoMSL(const spirvbytes& bin, const Options& opt, spv::ExecutionMod
         newBinding.stage = model;
         newBinding.desc_set = setting.descSet;
         newBinding.binding = 0;
-        newBinding.basetype = spirv_cross::SPIRType::SampledImage;
+        newBinding.basetype = rgl2sc(setting.type);
         newBinding.msl_texture = setting.descSet;
+        newBinding.msl_buffer = setting.descSet;
         msl.add_msl_resource_binding( newBinding );
     }
     
 	auto refldata = getReflectData(msl,bin);
+    
+#if 0
+    if (model == spv::ExecutionModel::ExecutionModelVertex){
+        uint8_t currentIndex = opt.bufferBindingSettings.firstIndex;
+        for(auto& resource : refldata.storage_buffers){
+            spirv_cross::MSLResourceBinding newBinding;
+            newBinding.stage = model;
+            newBinding.desc_set = 0;
+            newBinding.basetype = msl.get_type(resource.base_type_id).basetype;
+            newBinding.binding = currentIndex;
+            newBinding.msl_buffer = currentIndex;
+            newBinding.msl_texture = currentIndex;
+            msl.add_msl_resource_binding( newBinding );
+            currentIndex++;
+        }
+    }
+#endif
     
     if (opt.uniformBufferSettings.renameBuffer){
         if (refldata.uniform_buffers.size() > 0){
@@ -697,6 +705,58 @@ IMResult SPIRVtoMSL(const spirvbytes& bin, const Options& opt, spv::ExecutionMod
     
 	setEntryPoint(msl, opt.entryPoint);
     auto res = msl.compile();
+    
+    // renumber buffers the hacky way
+    constexpr auto resourceRenumber = [](auto&& res, auto&& opt, const std::string_view tag, auto&& renumberFn){
+        constexpr auto atoi_n = [](std::string_view str)
+        {
+            int ret = 0;
+            for(int i = 0; i < str.size(); ++i)
+            {
+                ret = ret * 10 + (str[i] - '0');
+            }
+            return ret;
+        };
+        
+        auto taglen = tag.size();
+        size_t itr = 0;
+        while (itr < res.size()){
+            itr = res.find(tag.data(), itr, taglen);
+            if (itr == std::string::npos){
+                break;
+            }
+            auto blockEnd = res.find(")",itr);
+            
+            const auto begin = itr + taglen;
+            
+            string_view rangeStr(res.data() + begin, blockEnd - itr - taglen);
+            
+            auto value = atoi_n(rangeStr);
+            
+            value = renumberFn(value);
+            
+            if (value > 31){
+                throw std::runtime_error("Adjusted index too large: " + std::to_string(value));
+            }
+            
+            // insert the value
+            res = res.substr(0, begin) + std::to_string(value) + res.substr(blockEnd);
+            
+            itr++;
+        }
+    };
+    
+    if (model == spv::ExecutionModel::ExecutionModelVertex && opt.bufferBindingSettings.stageInputSize > 0){
+        resourceRenumber(res,opt,"[[buffer(",[&opt](auto value){
+            return value + opt.bufferBindingSettings.stageInputSize;
+        });
+    }
+    {
+        uint32_t samplerIdx = 0;
+        resourceRenumber(res,opt,"[[sampler(",[&opt,&samplerIdx](auto value){
+            return samplerIdx++;
+        });
+    }
     
 	return {std::move(res), "", std::move(refldata)};
 }
@@ -897,7 +957,7 @@ CompileResult ShaderTranspiler::CompileTo(const FileCompileTask& task, TargetAPI
 CompileResult ShaderTranspiler::CompileTo(const MemoryCompileTask& task, TargetAPI api, const Options& opt) {
 	bool noPushConstants = api == TargetAPI::WGSL;
 	auto types = ShaderStageToInternal(task.stage);
-	auto spirv = CompileGLSL(task.source, types.type, task.includePaths, opt.debug, opt.enableInclude, opt.preambleContent, noPushConstants);
+	auto spirv = CompileGLSL(task.source, task.sourceFileName, types.type, task.includePaths, opt.debug, opt.enableInclude, opt.preambleContent, noPushConstants);
 	auto compres = CompileSpirVTo(spirv.spirvdata, api, opt, types);
 	compres.data.uniformData = std::move(spirv.uniforms);
 	compres.data.attributeData = std::move(spirv.attributes);

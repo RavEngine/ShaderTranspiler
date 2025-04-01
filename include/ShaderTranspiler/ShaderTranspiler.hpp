@@ -44,6 +44,7 @@ struct FileCompileTask{
 
 struct MemoryCompileTask {
 	const std::string source;
+	const std::string sourceFileName;
 	const ShaderStage stage;
 	const std::vector<std::filesystem::path> includePaths;	// optional
 };
@@ -120,6 +121,10 @@ struct Options{
     struct BindlessSettings {
         uint32_t descSet = 0;
         bool deviceStorage = false;
+        enum class Type : uint8_t{
+            SampledImage,
+            Buffer
+        } type;
     };
     std::vector<BindlessSettings> mtlDeviceAddressSettings;
     
@@ -127,6 +132,11 @@ struct Options{
         uint8_t firstIndex = 0;
         
     } pushConstantSettings;
+    
+    struct BufferBindingSettings{
+        uint8_t stageInputSize = 0;
+        
+    } bufferBindingSettings;
     std::string preambleContent;   // Put defines here
 };
 
